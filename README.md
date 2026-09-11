@@ -1,11 +1,14 @@
-﻿# Alpha Aerosols Lahore (Commissioning & Operations)
+﻿# Alpha Aerosols Kot Abdul Malik (Commissioning & Operations)
 
-Master project repository for **Alpha Aerosols Lahore**, specializing in monobloc aluminum aerosol container manufacturing (45 × 160 mm and 45 × 150 mm).
+Master manufacturing and ERP operations project for **Alpha Aerosols (Kot Abdul Malik)**, specializing in monobloc aluminum aerosol container production (45 × 160 mm and 45 × 150 mm).
 
-## Operating Context
-- **Location**: Lahore, Pakistan
-- **Planning & Procurement Lead**: Sikander
-- **Status**: Plant Commissioning (Commercial Production Launch in ~30 Days / October 2026)
+## Operational Context
+- **Plant Location**: Kot Abdul Malik, Punjab, Pakistan
+- **Planning & Procurement Lead**: Sikander (On-site at Kot Abdul Malik; manages Tubex Lahore remotely)
+- **Status**: Plant Commissioning (Commercial Launch in ~30 Days / October 2026)
+- **Project Structure**:
+  - `C:\Aerosol`: Plant Commissioning Tracker App (Milestones PWA)
+  - `D:\Aerosol`: Manufacturing Operations, BOMs, Job Cards, SOPs (This Project)
 - **System Rules**: See [AGENTS.md](file:///d:/Aerosol/AGENTS.md) and [PROJECT_CONTEXT.md](file:///d:/Aerosol/PROJECT_CONTEXT.md)
 
 ---
@@ -14,7 +17,7 @@ Master project repository for **Alpha Aerosols Lahore**, specializing in monoblo
 - **[Aerosol BOM.xlsx](file:///d:/Aerosol/Aerosol%20BOM.xlsx)**: Engineering requirement calculator and placeholder BOM across all raw materials.
 - **[Aerosol Raw Materials.xlsx](file:///d:/Aerosol/Aerosol%20Raw%20Materials.xlsx)**: Supplier raw material catalog, film weight specs, shelf lives, and storage guidelines.
 - **[Aerosol_Job_Card.xlsx](file:///d:/Aerosol/Aerosol_Job_Card.xlsx)**: Shop-floor traveler and material issuance model (AER-JC-001) supporting both 45×150mm and 45×160mm containers.
-- **[Aerosol_Production_Entry.xlsx](file:///d:/Aerosol/Aerosol_Production_Entry.xlsx)**: Daily machine data entry template for the Lahore production executive.
+- **[Aerosol_Production_Entry.xlsx](file:///d:/Aerosol/Aerosol_Production_Entry.xlsx)**: Daily machine data entry template for the on-site production executive.
 - **[Job Card.pdf](file:///d:/Aerosol/Job%20Card.pdf)**: Printable 1-page shop floor production job card.
 
 ## Technical Documentation & Basis
