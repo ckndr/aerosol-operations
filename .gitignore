@@ -1,0 +1,15 @@
+﻿# ── Temporary Office / Windows files ──
+~$*.xlsx
+~$*.docx
+~$*.pptx
+*.tmp
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ── Python cache & local logs ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+Logs/*.log
