@@ -41,11 +41,33 @@ async def web_manifest(request):
         headers={"Cache-Control": "no-cache"}
     )
 
-async def app_icon(request):
-    icon_path = os.path.join(BASE_DIR, 'material_flow.png')
-    if os.path.exists(icon_path):
-        return FileResponse(icon_path, media_type='image/png')
-    return JSONResponse({"error": "Icon not found"}, status_code=404)
+async def root_static_file(request):
+    raw_name = request.url.path.lstrip("/")
+    safe_name = os.path.basename(raw_name)
+    path = os.path.join(BASE_DIR, safe_name)
+    if os.path.exists(path) and os.path.isfile(path):
+        media_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".ico": "image/x-icon",
+            ".svg": "image/svg+xml",
+            ".json": "application/json",
+            ".js": "application/javascript",
+            ".css": "text/css",
+            ".html": "text/html"
+        }
+        ext = os.path.splitext(safe_name)[1].lower()
+        return FileResponse(path, media_type=media_types.get(ext, "application/octet-stream"))
+    return JSONResponse({"error": f"File '{safe_name}' not found"}, status_code=404)
+
+async def favicon_response(request):
+    for fn in ['favicon.ico', 'icon-192.png', 'apple-touch-icon.png']:
+        path = os.path.join(BASE_DIR, fn)
+        if os.path.exists(path):
+            media = 'image/x-icon' if fn.endswith('.ico') else 'image/png'
+            return FileResponse(path, media_type=media)
+    return JSONResponse({"error": "Favicon not found"}, status_code=404)
 
 async def get_production_data(request):
     try:
@@ -158,8 +180,15 @@ routes = [
     Route("/index.html", endpoint=home_redirect),
     Route("/sw.js", endpoint=service_worker, methods=["GET"]),
     Route("/manifest.json", endpoint=web_manifest, methods=["GET"]),
-    Route("/material_flow.png", endpoint=app_icon, methods=["GET"]),
-    Route("/favicon.ico", endpoint=app_icon, methods=["GET"]),
+    Route("/favicon.ico", endpoint=favicon_response, methods=["GET"]),
+    Route("/logo_dark.png", endpoint=root_static_file, methods=["GET"]),
+    Route("/logo_light.png", endpoint=root_static_file, methods=["GET"]),
+    Route("/Logo.png", endpoint=root_static_file, methods=["GET"]),
+    Route("/icon-192.png", endpoint=root_static_file, methods=["GET"]),
+    Route("/icon-512.png", endpoint=root_static_file, methods=["GET"]),
+    Route("/apple-touch-icon.png", endpoint=root_static_file, methods=["GET"]),
+    Route("/material_flow.png", endpoint=root_static_file, methods=["GET"]),
+    Route("/Inks.jpeg", endpoint=root_static_file, methods=["GET"]),
     Route("/api/data", endpoint=get_production_data, methods=["GET"]),
     Route("/api/shifts", endpoint=post_shift_entry, methods=["POST"]),
     Route("/api/orders", endpoint=post_order, methods=["POST"]),

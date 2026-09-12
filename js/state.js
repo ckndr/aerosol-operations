@@ -50,8 +50,46 @@ const DEFAULT_PRE_PRODUCTION_DATA = {
       is_within_tolerance: false
     }
   ],
-  shifts: [],
-  dispatches: [],
+  shifts: [
+    {
+      id: 1,
+      shift_date: "2026-09-12",
+      shift_type: "Day",
+      pof_id: 1,
+      pof_number: "POF-2026-001",
+      customer_name: "Aerosol Customer",
+      product_name: "Aerosol Container 45x160mm",
+      product_size: "45x160mm",
+      good_cans: 0,
+      line_scrap: 0,
+      total_cans: 0,
+      scrap_pct: 0.0,
+      downtime_hours: 0.0,
+      downtime_reason: "Pre-production tooling readiness",
+      supervisor: "Tariq Mahmood",
+      created_at: "2026-09-12T08:00:00"
+    }
+  ],
+  dispatches: [
+    {
+      id: 1,
+      challan_number: "DC-2026-001",
+      dispatch_date: "2026-09-12",
+      pof_id: 1,
+      pof_number: "POF-2026-001",
+      customer_name: "Aerosol Customer",
+      product_name: "Aerosol Container 45x160mm",
+      product_size: "45x160mm",
+      dispatched_cans: 0,
+      carton_count: 0,
+      pallet_count: 0,
+      vehicle_number: "Line 1 - Pre-Production",
+      driver_name: "Pending Assignment",
+      receiver_party: "Aerosol Customer",
+      status: "Scheduled",
+      created_at: "2026-09-12T08:00:00"
+    }
+  ],
   downtime_pareto: [],
   inventory: [
     { item_code: "501", category: "Aluminum Slugs", item_name: "45mm Aluminum Slug (Al99.7%)", uom: "kg", balance_qty: 25000.0, min_stock_level: 5000.0, batch_number: "SLUG-2026-08A", received_date: "2026-08-15", shelf_life_days: 1080, storage_condition: "Ambient Dry Store (5°C - 30°C)", location: "Kot Abdul Malik Central Stores", daily_burn_rate: 0.0, days_of_stock: 999.0, is_climate_sensitive: false, stock_status: "Healthy", shelf_evaluation: { age_days: 28, remaining_days: 1052, status: "normal", label: "Fresh Stock", expiry_date: "2029-08-01" } },

@@ -3,7 +3,7 @@
     "plant_name": "Alpha Aerosols",
     "location": "Kot Abdul Malik, Punjab, Pakistan",
     "as_of_date": "2026-09-12",
-    "generated_at": "2026-09-12T13:55:01.585950",
+    "generated_at": "2026-09-12T14:08:00.045412",
     "version": "2.0.0",
     "sqlite_mode": "WAL"
   },
@@ -17,7 +17,7 @@
     "today_dispatches_cans": 0,
     "today_dispatches_count": 0,
     "active_pofs_count": 1,
-    "downtime_hours_mtd": 0
+    "downtime_hours_mtd": 0.0
   },
   "orders": [
     {
@@ -46,7 +46,26 @@
       "is_within_tolerance": false
     }
   ],
-  "shifts": [],
+  "shifts": [
+    {
+      "id": 1,
+      "shift_date": "2026-09-12",
+      "shift_type": "Day",
+      "pof_id": 1,
+      "product_size": "45x160mm",
+      "good_cans": 0,
+      "line_scrap": 0,
+      "downtime_hours": 0.0,
+      "downtime_reason": "Pre-production tooling readiness",
+      "supervisor": "Tariq Mahmood",
+      "created_at": "2026-09-12T08:00:00",
+      "pof_number": "POF-2026-001",
+      "customer_name": "Aerosol Customer",
+      "product_name": "Aerosol Container 45x160mm",
+      "total_cans": 0,
+      "scrap_pct": 0.0
+    }
+  ],
   "inventory": [
     {
       "id": 3,
@@ -455,7 +474,26 @@
       "stock_status": "Healthy"
     }
   ],
-  "dispatches": [],
+  "dispatches": [
+    {
+      "id": 1,
+      "challan_number": "DC-2026-001",
+      "dispatch_date": "2026-09-12",
+      "pof_id": 1,
+      "dispatched_cans": 0,
+      "carton_count": 0,
+      "pallet_count": 0,
+      "vehicle_number": "Line 1 - Pre-Production",
+      "driver_name": "Pending Assignment",
+      "receiver_party": "Aerosol Customer",
+      "status": "Scheduled",
+      "created_at": "2026-09-12T08:00:00",
+      "pof_number": "POF-2026-001",
+      "customer_name": "Aerosol Customer",
+      "product_name": "Aerosol Container 45x160mm",
+      "product_size": "45x160mm"
+    }
+  ],
   "standards": {
     "45x160mm": {
       "product_size": "45x160mm",

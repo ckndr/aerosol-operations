@@ -298,9 +298,46 @@ async function handleShiftSubmit(event) {
 
     // Fallback to offline IndexedDB
     await savePendingShift(payload);
-    showToast('Saved offline in IndexedDB. Will sync automatically when online.', 'amber');
+
+    // Update local preview state in memory for immediate UI responsiveness
+    const pof = (AppState.data?.orders || []).find(o => String(o.id) === String(payload.pof_id));
+    const totalRun = payload.good_cans + payload.line_scrap;
+    const scrapPct = totalRun > 0 ? parseFloat(((payload.line_scrap / totalRun) * 100).toFixed(2)) : 0.0;
+    const clientShift = {
+      id: Date.now(),
+      ...payload,
+      total_cans: totalRun,
+      scrap_pct: scrapPct,
+      pof_number: pof ? pof.pof_number : `POF-${payload.pof_id}`,
+      customer_name: pof ? pof.customer_name : 'Alpha Customer',
+      created_at: new Date().toISOString()
+    };
+    if (!AppState.data.shifts) AppState.data.shifts = [];
+    AppState.data.shifts.unshift(clientShift);
+    if (AppState.data.kpis) {
+      AppState.data.kpis.today_output_cans = (AppState.data.kpis.today_output_cans || 0) + payload.good_cans;
+      AppState.data.kpis.today_scrap_cans = (AppState.data.kpis.today_scrap_cans || 0) + payload.line_scrap;
+      const todayTotal = AppState.data.kpis.today_output_cans + AppState.data.kpis.today_scrap_cans;
+      AppState.data.kpis.today_scrap_pct = todayTotal > 0 ? parseFloat(((AppState.data.kpis.today_scrap_cans / todayTotal) * 100).toFixed(2)) : 0.0;
+      AppState.data.kpis.mtd_output_cans = (AppState.data.kpis.mtd_output_cans || 0) + payload.good_cans;
+      AppState.data.kpis.mtd_scrap_cans = (AppState.data.kpis.mtd_scrap_cans || 0) + payload.line_scrap;
+      const mtdTotal = AppState.data.kpis.mtd_output_cans + AppState.data.kpis.mtd_scrap_cans;
+      AppState.data.kpis.mtd_scrap_pct = mtdTotal > 0 ? parseFloat(((AppState.data.kpis.mtd_scrap_cans / mtdTotal) * 100).toFixed(2)) : 0.0;
+      AppState.data.kpis.downtime_hours_mtd = parseFloat(((AppState.data.kpis.downtime_hours_mtd || 0) + payload.downtime_hours).toFixed(2));
+    }
+    if (pof) {
+      pof.produced_good = (pof.produced_good || 0) + payload.good_cans;
+      pof.produced_scrap = (pof.produced_scrap || 0) + payload.line_scrap;
+      pof.total_line_run = pof.produced_good + pof.produced_scrap;
+      pof.remaining_qty = Math.max(0, pof.order_qty - pof.produced_good);
+      pof.completion_pct = parseFloat(((pof.produced_good / pof.order_qty) * 100).toFixed(1));
+    }
+    window.dispatchEvent(new CustomEvent('app:state-changed', { detail: AppState.data }));
+
+    showToast(`Saved offline in IndexedDB (${formatNumber(goodCans)} cans). Will sync when online.`, 'amber');
     form.reset();
     resetShiftCalculations();
+    window.location.hash = '#dashboard';
   } finally {
     if (submitBtn) {
       submitBtn.disabled = false;

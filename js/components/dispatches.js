@@ -107,8 +107,16 @@ function openNewDispatchModal() {
   const modal = document.getElementById('modal-new-dispatch');
   if (modal) modal.classList.add('active');
   const dispSelect = document.getElementById('dispatch-pof-select');
-  if (dispSelect && dispSelect.value) {
-    handleDispatchPofChange(dispSelect);
+  if (dispSelect) {
+    const orders = (AppState.data && AppState.data.orders) || [];
+    if (dispSelect.options.length === 0 && orders.length > 0) {
+      dispSelect.innerHTML = orders.map(o => `
+        <option value="${o.id}">${o.pof_number} — ${o.customer_name} (${formatNumber(o.order_qty)} cans)</option>
+      `).join('');
+    }
+    if (dispSelect.value) {
+      handleDispatchPofChange(dispSelect);
+    }
   }
 }
 
@@ -148,6 +156,30 @@ async function submitNewDispatch(event) {
       showToast(`Error: ${result.error}`, 'red');
     }
   } catch (err) {
-    showToast('Failed to record dispatch. Please check connection.', 'red');
+    console.warn('Backend API unavailable, recording dispatch in local preview session:', err);
+    const newId = (AppState.data?.dispatches?.length || 0) + 1;
+    const pof = (AppState.data?.orders || []).find(o => String(o.id) === String(payload.pof_id));
+    const newDispatch = {
+      id: newId,
+      ...payload,
+      pof_number: pof ? pof.pof_number : `POF-${payload.pof_id}`,
+      customer_name: pof ? pof.customer_name : payload.receiver_party,
+      product_size: pof ? pof.product_size : '45x160mm',
+      status: 'In Transit',
+      created_at: new Date().toISOString()
+    };
+    if (!AppState.data.dispatches) AppState.data.dispatches = [];
+    AppState.data.dispatches.unshift(newDispatch);
+    if (AppState.data.kpis) {
+      AppState.data.kpis.today_dispatches_cans = (AppState.data.kpis.today_dispatches_cans || 0) + payload.dispatched_cans;
+      AppState.data.kpis.today_dispatches_count = (AppState.data.kpis.today_dispatches_count || 0) + 1;
+    }
+    if (pof) {
+      pof.dispatched_total = (pof.dispatched_total || 0) + payload.dispatched_cans;
+    }
+    window.dispatchEvent(new CustomEvent('app:state-changed', { detail: AppState.data }));
+    closeNewDispatchModal();
+    form.reset();
+    showToast(`Challan ${payload.challan_number} logged in preview session. (Run local server for SQLite sync)`, 'amber');
   }
 }

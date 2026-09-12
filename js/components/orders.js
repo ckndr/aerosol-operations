@@ -166,6 +166,34 @@ async function submitNewOrder(event) {
       showToast(`Error: ${result.error}`, 'red');
     }
   } catch (err) {
-    showToast('Failed to create order. Please check network connection.', 'red');
+    console.warn('Backend API unavailable, recording order in local preview session:', err);
+    const newId = (AppState.data?.orders?.length || 0) + 1;
+    const minQty = Math.floor(payload.order_qty * (1.0 - payload.tolerance_pct));
+    const maxQty = Math.ceil(payload.order_qty * (1.0 + payload.tolerance_pct));
+    const newOrder = {
+      id: newId,
+      ...payload,
+      status: 'In Production',
+      produced_good: 0,
+      produced_scrap: 0,
+      total_line_run: 0,
+      dispatched_total: 0,
+      min_acceptable_qty: minQty,
+      max_acceptable_qty: maxQty,
+      completion_pct: 0.0,
+      remaining_qty: payload.order_qty,
+      order_scrap_pct: 0.0,
+      is_within_tolerance: false,
+      created_at: new Date().toISOString()
+    };
+    if (!AppState.data.orders) AppState.data.orders = [];
+    AppState.data.orders.unshift(newOrder);
+    if (AppState.data.kpis) {
+      AppState.data.kpis.active_pofs_count = AppState.data.orders.filter(o => o.status === 'In Production' || o.status === 'Pending').length;
+    }
+    window.dispatchEvent(new CustomEvent('app:state-changed', { detail: AppState.data }));
+    closeNewOrderModal();
+    form.reset();
+    showToast(`POF ${payload.pof_number} created in preview session. (Run local server for SQLite sync)`, 'amber');
   }
 }

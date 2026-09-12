@@ -532,8 +532,12 @@ def seed_master_data(db_path: Optional[str] = None, as_of_date: str = "2026-09-1
                 "2026-09-12T08:00:00"
             )
         ]
-        shifts_data = []
-        dispatches_data = []
+        shifts_data = [
+            ("2026-09-12", "Day", 1, "45x160mm", 0, 0, 0.0, "Pre-production tooling readiness", "Tariq Mahmood", "2026-09-12T08:00:00")
+        ]
+        dispatches_data = [
+            ("DC-2026-001", "2026-09-12", 1, 0, 0, 0, "Line 1 - Pre-Production", "Pending Assignment", "Aerosol Customer", "Scheduled", "2026-09-12T08:00:00")
+        ]
         # Full warehouse inventory ready for plant startup (all fresh batches)
         inventory_data = [
             ("501", "Aluminum Slugs", "45mm Aluminum Slug (Al99.7%)", "kg", 25000.0, 5000.0, 780.0, "SLUG-2026-08A", "2026-08-15", 1080, "Ambient Dry Store (5°C - 30°C)", "Kot Abdul Malik Central Stores", "2026-09-12T10:00:00"),
@@ -785,6 +789,7 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
     # Today's Dispatches
     today_dispatches = [d for d in dispatches if d["dispatch_date"] == ref_date_str]
     today_dispatched_cans = sum(d["dispatched_cans"] for d in today_dispatches)
+    today_dispatches_count = len([d for d in today_dispatches if d.get("dispatched_cans", 0) > 0 or d.get("status") in ("Delivered", "In Transit")])
 
     # Active POFs
     active_pofs = [o for o in orders if o["status"] in ("In Production", "Pending")]
@@ -793,7 +798,7 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
     downtime_by_reason = {}
     for s in mtd_shifts:
         reason = s.get("downtime_reason") or "Unspecified"
-        if reason and reason != "None":
+        if reason and reason != "None" and s.get("downtime_hours", 0.0) > 0:
             downtime_by_reason[reason] = round(downtime_by_reason.get(reason, 0.0) + s["downtime_hours"], 2)
 
     payload = {
@@ -813,7 +818,7 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
             "mtd_scrap_cans": mtd_scrap,
             "mtd_scrap_pct": mtd_scrap_pct,
             "today_dispatches_cans": today_dispatched_cans,
-            "today_dispatches_count": len(today_dispatches),
+            "today_dispatches_count": today_dispatches_count,
             "active_pofs_count": len(active_pofs),
             "downtime_hours_mtd": round(sum(s["downtime_hours"] for s in mtd_shifts), 1)
         },

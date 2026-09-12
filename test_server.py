@@ -80,5 +80,23 @@ class TestServerEndpoints(unittest.TestCase):
         self.assertIn("application/vnd.openxmlformats-officedocument", res.headers.get("content-type", ""))
         self.assertGreater(len(res.content), 3000)
 
+    def test_root_static_assets(self):
+        """Verify official logos, icons, and static root files are served with 200."""
+        assets = [
+            "/logo_dark.png",
+            "/logo_light.png",
+            "/Logo.png",
+            "/icon-192.png",
+            "/icon-512.png",
+            "/apple-touch-icon.png",
+            "/favicon.ico",
+            "/material_flow.png"
+        ]
+        for asset in assets:
+            res = self.client.get(asset)
+            self.assertEqual(res.status_code, 200, f"Asset {asset} failed to load")
+            self.assertIn("image/", res.headers.get("content-type", ""))
+            self.assertGreater(len(res.content), 100)
+
 if __name__ == "__main__":
     unittest.main()
