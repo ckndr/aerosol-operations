@@ -1,4 +1,4 @@
-﻿# Alpha Aerosols Kot Abdul Malik (Commissioning & Operations)
+# Alpha Aerosols Kot Abdul Malik (Commissioning & Operations)
 
 Master manufacturing and ERP operations project for **Alpha Aerosols (Kot Abdul Malik)**, specializing in monobloc aluminum aerosol container production (45 × 160 mm and 45 × 150 mm).
 
@@ -7,7 +7,7 @@ Master manufacturing and ERP operations project for **Alpha Aerosols (Kot Abdul 
 - **Planning & Procurement Lead**: Sikander (On-site at Kot Abdul Malik; manages Tubex Lahore remotely)
 - **Status**: Plant Commissioning (Commercial Launch in ~30 Days / October 2026)
 - **Project Structure**:
-  - `C:\Aerosol`: Plant Commissioning Tracker App (Milestones PWA)
+  - `C:\Aerosol-Tracker`: Plant Commissioning Tracker App (Milestones PWA)
   - `D:\Aerosol`: Manufacturing Operations, BOMs, Job Cards, SOPs (This Project)
 - **System Rules**: See [AGENTS.md](file:///d:/Aerosol/AGENTS.md) and [PROJECT_CONTEXT.md](file:///d:/Aerosol/PROJECT_CONTEXT.md)
 

@@ -1,4 +1,4 @@
-﻿# ALPHA AEROSOLS (KOT ABDUL MALIK) — MASTER PROJECT CONTEXT
+# ALPHA AEROSOLS (KOT ABDUL MALIK) — MASTER PROJECT CONTEXT
 
 **Plant**: Alpha Aerosols (Monobloc Aluminum Aerosol Cans)  
 **Location**: Kot Abdul Malik, Punjab, Pakistan  
@@ -10,7 +10,7 @@
 ---
 
 ## 1. THE TWO AEROSOL PROJECTS (SAME COMPANY / PLANT)
-- **`C:\Aerosol`**: The **Aerosol Commissioning Plant Tracker App** (milestones, civil work, machine installation, tasks, mobile PWA). Connected to `github.com/ckndr/Aerosol` (or `aerosol-tracker`).
+- **`C:\Aerosol-Tracker`**: The **Aerosol Commissioning Plant Tracker App** (milestones, civil work, machine installation, tasks, mobile PWA). Connected to `github.com/ckndr/aerosol-tracker`.
 - **`D:\Aerosol`**: The **Aerosol Operations & ERP Master Project** (manufacturing BOMs, Job Cards, SOPs, chemical specs, daily production logging — modeled as a sister project to Tubex `d:\Alpha`).
 
 ---

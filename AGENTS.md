@@ -1,4 +1,4 @@
-﻿# SYSTEM CONTEXT & OPERATING RULES: ALPHA AEROSOLS (KOT ABDUL MALIK)
+# SYSTEM CONTEXT & OPERATING RULES: ALPHA AEROSOLS (KOT ABDUL MALIK)
 
 ## 1. USER PROFILE & OPERATIONAL WORKFLOW
 - **User**: Sikander
@@ -8,7 +8,7 @@
 - **Decision Boundaries**: Sikander manages planning, procurement, MRP, inventory, BOM modeling, job cards, and reporting. He does **NOT** make shop-floor machinery, tooling, press settings, or curing decisions. All equipment and chemical application decisions are referred to the on-site Aerosol production team. Tailor all assistance strictly to Planning, Procurement, and Material Accounting.
 
 ## 2. THE TWO AEROSOL PROJECTS (SAME COMPANY / PLANT)
-- **`C:\Aerosol`**: The **Aerosol Commissioning Plant Tracker App** (tasks, civil/machine installation milestones, Gantt tracking, PWA). Connected to `ckndr/Aerosol` (or `aerosol-tracker`).
+- **`C:\Aerosol-Tracker`**: The **Aerosol Commissioning Plant Tracker App** (tasks, civil/machine installation milestones, Gantt tracking, PWA). Connected to `ckndr/aerosol-tracker`.
 - **`D:\Aerosol`**: The **Aerosol Operations & ERP Master Project** (manufacturing BOMs, Job Cards, SOPs, Raw Material specifications, daily production logs — modeled after the Tubex project structure in `d:\Alpha`).
 
 ## 3. BOM ARCHITECTURE & PHILOSOPHY
