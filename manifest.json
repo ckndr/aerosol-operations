@@ -1,0 +1,22 @@
+{
+  "name": "Alpha Aerosols Production Management",
+  "short_name": "Alpha Aerosols",
+  "description": "Production operations, POF tracking, and floor shift logging for monobloc aluminum aerosol plant",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#12151a",
+  "theme_color": "#12151a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

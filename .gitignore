@@ -1,4 +1,4 @@
-﻿# ── Temporary Office / Windows files ──
+# ── Temporary Office / Windows files ──
 ~$*.xlsx
 ~$*.docx
 ~$*.pptx
@@ -13,3 +13,9 @@ __pycache__/
 *.pyo
 *.pyd
 Logs/*.log
+
+# ── SQLite temporary files ──
+*.db-wal
+*.db-shm
+*test_*.db*
+*test_*.json*

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#12151a">
+  <title>Alpha Aerosols — Factory Operations Portal</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/png" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="app-header">
+    <div class="header-top">
+      <div class="brand-group">
+        <img id="header-logo" src="./logo_dark.png" alt="Alpha Aerosols Logo" class="brand-logo-img">
+        <div>
+          <h1 class="brand-title">Alpha Aerosols</h1>
+          <div class="brand-subtitle">Kot Abdul Malik • Manufacturing Operations</div>
+        </div>
+      </div>
+
+      <div class="header-meta">
+        <div class="status-pill" title="Plant Operating Mode">
+          <span class="status-dot emerald" id="connection-status-dot"></span>
+          <span id="connection-status-text">Online</span>
+        </div>
+        <span id="offline-queue-badge" class="badge badge-amber" style="display: none; cursor: pointer;" onclick="syncPendingShifts()" title="Click to manually push queued shifts">0 queued</span>
+        <button class="theme-toggle-btn" onclick="toggleTheme()" id="theme-toggle-btn">
+          🌓 <span id="theme-toggle-label">Graphite Dark</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Navigation Bar Tabs -->
+    <nav class="nav-bar" id="main-nav">
+      <a href="#dashboard" class="nav-tab active">
+        <span>📊 KPI Dashboard</span>
+      </a>
+      <a href="#orders" class="nav-tab">
+        <span>📋 Customer POFs</span>
+      </a>
+      <a href="#entry" class="nav-tab">
+        <span>📝 Floor Shift Entry</span>
+      </a>
+      <a href="#inventory" class="nav-tab">
+        <span>📦 Inventory & Shelf-Life</span>
+      </a>
+      <a href="#dispatches" class="nav-tab">
+        <span>🚚 Dispatches</span>
+      </a>
+      <a href="#simulator" class="nav-tab">
+        <span>⚙️ BOM Simulator</span>
+      </a>
+    </nav>
+  </header>
+
+  <!-- Main View Container -->
+  <main class="app-container">
+    <section id="view-dashboard" class="view-section active"></section>
+    <section id="view-orders" class="view-section"></section>
+    <section id="view-entry" class="view-section"></section>
+    <section id="view-inventory" class="view-section"></section>
+    <section id="view-dispatches" class="view-section"></section>
+    <section id="view-simulator" class="view-section"></section>
+  </main>
+
+  <!-- Modal: Create New Order (POF) -->
+  <div id="modal-new-order" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 style="font-family: var(--font-display); font-size: 18px;">Create New Production Order (POF)</h3>
+        <button type="button" class="btn btn-secondary" style="padding: 4px 8px;" onclick="closeNewOrderModal()">✕</button>
+      </div>
+      <form onsubmit="submitNewOrder(event)">
+        <div class="modal-body form-grid">
+          <div class="form-group">
+            <label class="form-label">POF Number</label>
+            <input type="text" name="pof_number" class="form-input" placeholder="e.g. POF-2026-084" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Customer Name</label>
+            <input type="text" name="customer_name" class="form-input" placeholder="e.g. L'Oreal CareLine" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Product Name & Description</label>
+            <input type="text" name="product_name" class="form-input" placeholder="e.g. Deodorant Spray 150ml" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Container Size</label>
+            <select name="product_size" class="form-select">
+              <option value="45x160mm">45 x 160 mm (Primary Standard, 0.40mm)</option>
+              <option value="45x150mm">45 x 150 mm (Alternate Standard, 0.35mm)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Order Quantity (Cans)</label>
+            <input type="number" name="order_qty" class="form-input" value="100000" min="1000" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tolerance % (Standard ±5%)</label>
+            <input type="number" step="0.5" name="tolerance_pct" class="form-input" value="5" min="0" max="15" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Order Date</label>
+            <input type="date" name="order_date" class="form-input" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Delivery Due Date</label>
+            <input type="date" name="due_date" class="form-input" required>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <label class="form-label">Artwork Proof Reference</label>
+            <input type="text" name="artwork_ref" class="form-input" placeholder="e.g. ART-2026-REV2">
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <label class="form-label">Operational Notes</label>
+            <textarea name="notes" class="form-textarea" rows="2" placeholder="Coating specs, delivery remarks..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeNewOrderModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Order</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Issue Delivery Challan -->
+  <div id="modal-new-dispatch" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 style="font-family: var(--font-display); font-size: 18px;">Issue Delivery Challan & Gate Pass</h3>
+        <button type="button" class="btn btn-secondary" style="padding: 4px 8px;" onclick="closeNewDispatchModal()">✕</button>
+      </div>
+      <form onsubmit="submitNewDispatch(event)">
+        <div class="modal-body form-grid">
+          <div class="form-group">
+            <label class="form-label">Challan Number</label>
+            <input type="text" name="challan_number" class="form-input" placeholder="e.g. DC-2026-043" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Dispatch Date</label>
+            <input type="date" name="dispatch_date" class="form-input" required>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1;">
+            <label class="form-label">Select Active POF #</label>
+            <select name="pof_id" class="form-select" id="dispatch-pof-select" required onchange="handleDispatchPofChange(this)">
+              <!-- Filled dynamically -->
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Dispatched Cans (pcs)</label>
+            <input type="number" name="dispatched_cans" class="form-input" placeholder="e.g. 35000" min="1" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Carton Count</label>
+            <input type="number" name="carton_count" class="form-input" placeholder="e.g. 175" min="1" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Pallet Count</label>
+            <input type="number" name="pallet_count" class="form-input" placeholder="e.g. 12" min="1" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Vehicle Registration #</label>
+            <input type="text" name="vehicle_number" class="form-input" placeholder="e.g. LES-4412" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Driver Name</label>
+            <input type="text" name="driver_name" class="form-input" placeholder="e.g. Muhammad Akram">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Receiver Party</label>
+            <input type="text" name="receiver_party" class="form-input" placeholder="e.g. Golden Pearl Cosmetics" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeNewDispatchModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Authorize & Dispatch</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="./js/state.js"></script>
+  <script src="./js/components/dashboard.js"></script>
+  <script src="./js/components/orders.js"></script>
+  <script src="./js/components/shift_entry.js"></script>
+  <script src="./js/components/inventory.js"></script>
+  <script src="./js/components/dispatches.js"></script>
+  <script src="./js/components/simulator.js"></script>
+  <script src="./js/router.js"></script>
+
+  <!-- PWA Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').then((reg) => {
+          reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                // Subtle non-disruptive update notification toast
+                const toast = document.createElement('div');
+                toast.className = 'toast amber';
+                toast.innerHTML = `<span>App updated — <strong style="cursor:pointer; text-decoration:underline;" id="btn-refresh-pwa">Tap to Refresh</strong></span>`;
+                document.getElementById('toast-container')?.appendChild(toast);
+                document.getElementById('btn-refresh-pwa')?.addEventListener('click', () => {
+                  newWorker.postMessage({ action: 'skipWaiting' });
+                  window.location.reload();
+                });
+              }
+            });
+          });
+        }).catch((err) => console.warn('SW registration failed:', err));
+      });
+    }
+
+    // Populate modal dropdowns when data loads
+    window.addEventListener('app:state-changed', (e) => {
+      const orders = e.detail?.orders || [];
+      const dispSelect = document.getElementById('dispatch-pof-select');
+      if (dispSelect) {
+        dispSelect.innerHTML = orders.map(o => `
+          <option value="${o.id}">${o.pof_number} — ${o.customer_name} (${formatNumber(o.order_qty)} cans)</option>
+        `).join('');
+        if (typeof handleDispatchPofChange === 'function' && dispSelect.value) {
+          handleDispatchPofChange(dispSelect);
+        }
+      }
+      const today = new Date().toISOString().split('T')[0];
+      const ordDate = document.querySelector('#modal-new-order input[name="order_date"]');
+      if (ordDate && !ordDate.value) ordDate.value = today;
+      const dispDate = document.querySelector('#modal-new-dispatch input[name="dispatch_date"]');
+      if (dispDate && !dispDate.value) dispDate.value = today;
+    });
+  </script>
+</body>
+</html>
