@@ -170,12 +170,16 @@ async function submitNewDispatch(event) {
     };
     if (!AppState.data.dispatches) AppState.data.dispatches = [];
     AppState.data.dispatches.unshift(newDispatch);
+    if (pof) {
+      pof.dispatched_total = (pof.dispatched_total || 0) + payload.dispatched_cans;
+      pof.fg_stock = Math.max(0, (pof.produced_good || 0) - (pof.dispatched_total || 0));
+    }
     if (AppState.data.kpis) {
       AppState.data.kpis.today_dispatches_cans = (AppState.data.kpis.today_dispatches_cans || 0) + payload.dispatched_cans;
       AppState.data.kpis.today_dispatches_count = (AppState.data.kpis.today_dispatches_count || 0) + 1;
-    }
-    if (pof) {
-      pof.dispatched_total = (pof.dispatched_total || 0) + payload.dispatched_cans;
+      const totalFgCans = (AppState.data.orders || []).reduce((acc, o) => acc + Math.max(0, (o.produced_good || 0) - (o.dispatched_total || 0)), 0);
+      AppState.data.kpis.fg_buffer_cans = totalFgCans;
+      AppState.data.kpis.fg_buffer_pallets = parseFloat((totalFgCans / 3000.0).toFixed(1));
     }
     window.dispatchEvent(new CustomEvent('app:state-changed', { detail: AppState.data }));
     closeNewDispatchModal();

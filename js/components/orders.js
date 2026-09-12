@@ -178,6 +178,7 @@ async function submitNewOrder(event) {
       produced_scrap: 0,
       total_line_run: 0,
       dispatched_total: 0,
+      fg_stock: 0,
       min_acceptable_qty: minQty,
       max_acceptable_qty: maxQty,
       completion_pct: 0.0,

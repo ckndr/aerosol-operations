@@ -1151,12 +1151,12 @@ def export_job_card_excel(pof_id: int, output_path: str, db_path: Optional[str] 
     wb.save(output_path)
     return output_path
 
-def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path: Optional[str] = None) -> Dict[str, Any]:
+def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path: Optional[str] = None, json_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Synchronizes shift production records from an Excel workbook into aerosol.db (SQLite WAL).
     Enforces Zero Windows COM Automation (pure Python openpyxl).
     Deducts raw materials via physical yield-inverse mass balance.
-    Auto-refreshes data/production.json.
+    Auto-refreshes production JSON snapshot (respects custom json_path).
     """
     if db_path is None:
         db_path = DB_PATH
@@ -1181,11 +1181,11 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
     for r in range(1, min(7, ws.max_row + 1)):
         row_vals = [ws.cell(row=r, column=c).value for c in range(1, min(20, ws.max_column + 1))]
         str_vals = [str(v).lower().strip() for v in row_vals if v is not None]
-        if any("date" in s for s in str_vals) and (any("good" in s or "total" in s or "pof" in s for s in str_vals)):
+        if any("date" in s for s in str_vals) and (any("good" in s or "total" in s or "pof" in s or "machine" in s for s in str_vals)):
             header_row_idx = r
             for c in range(1, min(20, ws.max_column + 1)):
                 val = ws.cell(row=r, column=c).value
-                if val:
+                if val is not None:
                     clean_header = str(val).lower().replace('\n', ' ').strip()
                     headers[clean_header] = c
             break
@@ -1199,10 +1199,53 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
             "skipped_empty": 0
         }
 
-    def get_col_val(row_idx, keywords):
+    def get_col_val(row_idx, keywords, exclude_keywords=None):
         for h_text, col_idx in headers.items():
             if any(k in h_text for k in keywords):
+                if exclude_keywords and any(ek in h_text for ek in exclude_keywords):
+                    continue
                 return ws.cell(row=row_idx, column=col_idx).value
+        return None
+
+    def parse_clean_number(val: Any) -> Optional[float]:
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            if math.isnan(val):
+                return None
+            return float(val)
+        val_str = str(val).strip()
+        if not val_str or val_str.lower() in ("none", "null", "nan", "-", "", "#value!", "#ref!", "#n/a"):
+            return None
+        cleaned = val_str.replace(",", "").replace(" ", "").replace("pcs", "").strip()
+        if cleaned.endswith("%"):
+            try:
+                return float(cleaned[:-1].strip())
+            except ValueError:
+                return None
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+
+    def parse_clean_date(val: Any) -> Optional[str]:
+        if val is None:
+            return None
+        if isinstance(val, (datetime, date)):
+            return val.strftime("%Y-%m-%d")
+        val_str = str(val).strip()
+        if not val_str:
+            return None
+        for fmt in (
+            "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d",
+            "%d-%b-%Y", "%d-%B-%Y", "%d/%b/%Y", "%d/%B/%Y",
+            "%d.%m.%Y", "%d.%m.%y", "%d/%m/%y", "%d-%m-%y",
+            "%b %d, %Y", "%B %d, %Y", "%Y.%m.%d"
+        ):
+            try:
+                return datetime.strptime(val_str, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
         return None
 
     conn = get_connection(db_path)
@@ -1218,115 +1261,147 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
         raw_date = get_col_val(r, ["date"])
         raw_pof = get_col_val(r, ["pof", "order"])
         raw_product = get_col_val(r, ["product"])
-        raw_good = get_col_val(r, ["good"])
-        raw_rejects = get_col_val(r, ["reject", "scrap"])
-        raw_total = get_col_val(r, ["total"])
-        raw_downtime = get_col_val(r, ["down"])
-        raw_remarks = get_col_val(r, ["remark", "reason"])
+        raw_pid = get_col_val(r, ["pid"])
+        raw_machine = get_col_val(r, ["machine"])
+        raw_customer = get_col_val(r, ["customer"])
+        raw_good = get_col_val(r, ["good"], exclude_keywords=["%", "pct", "rate"])
+        raw_rejects = get_col_val(r, ["reject", "scrap"], exclude_keywords=["%", "pct", "rate"])
+        raw_reject_pct = get_col_val(r, ["rejection %", "reject %", "scrap %"])
+        raw_total = get_col_val(r, ["total"], exclude_keywords=["%", "pct", "rate", "down"])
+        raw_downtime = get_col_val(r, ["down"], exclude_keywords=["reason", "remark", "cause"])
+        raw_remarks = get_col_val(r, ["remark", "reason", "cause"])
         raw_supervisor = get_col_val(r, ["supervisor", "lead"])
         raw_shift = get_col_val(r, ["shift"])
-        raw_customer = get_col_val(r, ["customer"])
 
         # Check if row is empty or template row
-        if raw_date is None and raw_good is None and raw_total is None:
+        if raw_date is None and raw_good is None and raw_total is None and raw_pof is None:
             skipped_empty += 1
             continue
 
         # Parse date
-        shift_date = None
-        if isinstance(raw_date, (datetime, date)):
-            shift_date = raw_date.strftime("%Y-%m-%d")
-        elif isinstance(raw_date, str) and raw_date.strip():
-            date_clean = raw_date.strip()
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
-                try:
-                    shift_date = datetime.strptime(date_clean, fmt).strftime("%Y-%m-%d")
-                    break
-                except ValueError:
-                    pass
+        shift_date = parse_clean_date(raw_date)
         if not shift_date:
             skipped_empty += 1
             continue
 
-        # Parse numbers
-        try:
-            good_cans = int(round(float(raw_good))) if raw_good is not None else 0
-        except (ValueError, TypeError):
-            good_cans = 0
+        # Parse and reconcile numbers
+        good_num = parse_clean_number(raw_good)
+        scrap_num = parse_clean_number(raw_rejects)
+        total_num = parse_clean_number(raw_total)
 
-        try:
-            line_scrap = int(round(float(raw_rejects))) if raw_rejects is not None else 0
-        except (ValueError, TypeError):
+        # If scrap was not in count column, check if scrap rate exists
+        if scrap_num is None and raw_reject_pct is not None:
+            pct_val = parse_clean_number(raw_reject_pct)
+            if pct_val is not None and total_num is not None:
+                rate = pct_val / 100.0 if pct_val > 1.0 else pct_val
+                scrap_num = round(total_num * rate)
+
+        if good_num is not None and scrap_num is not None:
+            good_cans = int(round(good_num))
+            line_scrap = int(round(scrap_num))
+        elif good_num is not None and total_num is not None:
+            good_cans = int(round(good_num))
+            line_scrap = max(0, int(round(total_num - good_num)))
+        elif scrap_num is not None and total_num is not None:
+            line_scrap = int(round(scrap_num))
+            good_cans = max(0, int(round(total_num - scrap_num)))
+        elif good_num is not None:
+            good_cans = int(round(good_num))
+            line_scrap = 0
+        elif total_num is not None:
+            good_cans = int(round(total_num))
+            line_scrap = 0
+        else:
+            good_cans = 0
             line_scrap = 0
 
-        try:
-            total_cans = int(round(float(raw_total))) if raw_total is not None else 0
-        except (ValueError, TypeError):
-            total_cans = 0
-
         if good_cans == 0 and line_scrap == 0:
-            if total_cans > 0:
-                good_cans = total_cans
-            else:
-                skipped_empty += 1
-                continue
+            skipped_empty += 1
+            continue
+
+        # Determine product size from PID, product name, or remarks
+        combined_meta = f"{raw_pid or ''} {raw_product or ''} {raw_remarks or ''}"
+        if "9003" in str(raw_pid or "") or "150" in combined_meta:
+            inferred_size = "45x150mm"
+        else:
+            inferred_size = "45x160mm"
 
         # Resolve POF and Order
         pof_id = None
         product_size = None
         pof_str = str(raw_pof).strip() if raw_pof is not None else ""
+
         if pof_str:
-            cur.execute("SELECT id, product_size FROM orders WHERE pof_number = ? OR pof_number = ? OR id = ?;",
-                        (pof_str, f"POF-{pof_str}", pof_str))
+            cand_pofs = [pof_str]
+            if not pof_str.upper().startswith("POF-"):
+                cand_pofs.append(f"POF-{pof_str}")
+                if pof_str.isdigit():
+                    cand_pofs.append(f"POF-2026-{int(pof_str):03d}")
+
+            placeholders = ",".join(["?"] * len(cand_pofs))
+            cur.execute(f"SELECT id, product_size FROM orders WHERE pof_number IN ({placeholders}) OR id = ?;",
+                        (*cand_pofs, pof_str))
+            matched_order = cur.fetchone()
+            if matched_order:
+                pof_id = matched_order["id"]
+                product_size = matched_order["product_size"]
+
+        cust_str = str(raw_customer).strip() if raw_customer else ""
+        if not pof_id and cust_str:
+            cur.execute("SELECT id, product_size FROM orders WHERE LOWER(customer_name) LIKE LOWER(?) ORDER BY id DESC;", (f"%{cust_str}%",))
             matched_order = cur.fetchone()
             if matched_order:
                 pof_id = matched_order["id"]
                 product_size = matched_order["product_size"]
 
         if not pof_id:
-            cust_str = str(raw_customer).strip() if raw_customer else ""
-            if cust_str:
-                cur.execute("SELECT id, product_size FROM orders WHERE customer_name LIKE ?;", (f"%{cust_str}%",))
-                matched_order = cur.fetchone()
-                if matched_order:
-                    pof_id = matched_order["id"]
-                    product_size = matched_order["product_size"]
-
-        if not pof_id:
-            cur.execute("SELECT id, product_size FROM orders ORDER BY id ASC LIMIT 1;")
-            first_ord = cur.fetchone()
-            if first_ord:
-                pof_id = first_ord["id"]
-                product_size = first_ord["product_size"]
-            else:
-                new_pof_num = pof_str if pof_str else "POF-2026-001"
+            # If pof_str was provided but didn't exist in DB, create this new order!
+            if pof_str:
+                clean_pof = pof_str if pof_str.upper().startswith("POF-") else f"POF-{pof_str}"
+                product_size = inferred_size
+                p_name = str(raw_product).strip() if raw_product else f"Aerosol Container {product_size}"
                 cur.execute("""
                 INSERT INTO orders (pof_number, customer_name, product_name, product_size, order_qty, tolerance_pct, order_date, due_date, status, created_at)
-                VALUES (?, ?, ?, '45x160mm', 100000, 0.05, ?, ?, 'In Production', ?);
-                """, (new_pof_num, cust_str or "Aerosol Customer", str(raw_product) or "Aerosol Container 45x160mm", shift_date, shift_date, now_iso))
+                VALUES (?, ?, ?, ?, 100000, 0.05, ?, ?, 'In Production', ?);
+                """, (clean_pof, cust_str or "Aerosol Customer", p_name, product_size, shift_date, shift_date, now_iso))
                 pof_id = cur.lastrowid
-                product_size = "45x160mm"
+            else:
+                # Check for active order with matching product size
+                cur.execute("SELECT id, product_size FROM orders WHERE status IN ('In Production', 'Pending') AND product_size = ? ORDER BY id ASC LIMIT 1;", (inferred_size,))
+                active_ord = cur.fetchone()
+                if active_ord:
+                    pof_id = active_ord["id"]
+                    product_size = active_ord["product_size"]
+                else:
+                    cur.execute("SELECT id, product_size FROM orders ORDER BY id ASC LIMIT 1;")
+                    first_ord = cur.fetchone()
+                    if first_ord:
+                        pof_id = first_ord["id"]
+                        product_size = first_ord["product_size"]
+                    else:
+                        product_size = inferred_size
+                        cur.execute("""
+                        INSERT INTO orders (pof_number, customer_name, product_name, product_size, order_qty, tolerance_pct, order_date, due_date, status, created_at)
+                        VALUES ('POF-2026-001', 'Aerosol Customer', 'Aerosol Container 45x160mm', ?, 100000, 0.05, ?, ?, 'In Production', ?);
+                        """, (product_size, shift_date, shift_date, now_iso))
+                        pof_id = cur.lastrowid
 
         if not product_size:
-            p_text = f"{raw_product or ''} {raw_remarks or ''}"
-            product_size = "45x150mm" if "150" in p_text else "45x160mm"
+            product_size = inferred_size
 
-        # Shift type
-        shift_type = "Day"
-        if raw_shift and str(raw_shift).strip().lower().startswith("n"):
+        # Shift type (A/1/Day -> Day; B/2/Night -> Night)
+        shift_str = str(raw_shift).strip().lower() if raw_shift is not None else ""
+        remarks_str = str(raw_remarks).lower() if raw_remarks else ""
+        if shift_str in ("b", "night", "n", "2", "shift b", "shift 2") or "night" in remarks_str or "shift b" in remarks_str:
             shift_type = "Night"
-        elif raw_remarks and "night" in str(raw_remarks).lower():
-            shift_type = "Night"
+        else:
+            shift_type = "Day"
 
-        # Downtime hours and reason
-        try:
-            downtime_hours = float(raw_downtime) if raw_downtime is not None else 0.0
-        except (ValueError, TypeError):
-            downtime_hours = 0.0
+        # Downtime hours
+        downtime_num = parse_clean_number(raw_downtime)
+        downtime_hours = max(0.0, round(downtime_num, 2)) if downtime_num else 0.0
 
-        downtime_reason = str(raw_remarks).strip() if raw_remarks else "None"
-
-        # Supervisor
+        # Supervisor resolution
         supervisor = "Tariq Mahmood"
         if raw_supervisor:
             supervisor = str(raw_supervisor).strip()
@@ -1335,6 +1410,19 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
                 if s_name.lower() in str(raw_remarks).lower():
                     supervisor = s_name
                     break
+
+        # Clean downtime reason
+        downtime_reason = "None"
+        if raw_remarks:
+            rem_clean = str(raw_remarks).strip()
+            if rem_clean.lower() == supervisor.lower():
+                downtime_reason = "Normal continuous run" if downtime_hours == 0 else "Unspecified stoppage"
+            else:
+                for s_name in ["Tariq Mahmood", "M. Aslam", "Sikander"]:
+                    rem_clean = rem_clean.replace(f"- {s_name}", "").replace(f"-{s_name}", "").strip()
+                downtime_reason = rem_clean or ("Normal continuous run" if downtime_hours == 0 else "Unspecified stoppage")
+        elif raw_machine and downtime_hours > 0:
+            downtime_reason = f"{raw_machine} stoppage"
 
         # Check for duplicate shift to ensure idempotence
         cur.execute("""
@@ -1353,7 +1441,7 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, (shift_date, shift_type, pof_id, product_size, good_cans, line_scrap, downtime_hours, downtime_reason, supervisor, now_iso))
 
-        # Deduct raw material consumption
+        # Deduct raw material consumption via yield-inverse mass balance
         bom_calc = calculate_bom(product_size, good_cans)
         for itm in bom_calc["items"]:
             consumed_qty = itm["gross_total"]
@@ -1369,8 +1457,8 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
     conn.commit()
     conn.close()
 
-    # Re-export JSON
-    export_production_json(db_path)
+    # Re-export JSON snapshot (respecting custom json_path if provided)
+    export_production_json(db_path, json_path=json_path)
 
     return {
         "status": "success",

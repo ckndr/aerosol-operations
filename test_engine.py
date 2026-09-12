@@ -109,7 +109,9 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
 
     def test_json_export_structure(self):
         """Verify production.json adheres to schema and contains required metrics."""
-        data = export_production_json(as_of_date="2026-09-12")
+        test_out_json = os.path.join(os.path.dirname(__file__), 'data', 'test_schema_out.json')
+        self.addCleanup(lambda: os.remove(test_out_json) if os.path.exists(test_out_json) else None)
+        data = export_production_json(json_path=test_out_json, as_of_date="2026-09-12")
         self.assertIn("meta", data)
         self.assertIn("kpis", data)
         self.assertIn("orders", data)
@@ -141,7 +143,9 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
 
     def test_fg_stock_and_latest_shift_kpis(self):
         """Verify fg_stock per order and fg_buffer_cans, latest_shift in KPIs."""
-        data = export_production_json(as_of_date="2026-09-12")
+        test_out_json = os.path.join(os.path.dirname(__file__), 'data', 'test_kpi_out.json')
+        self.addCleanup(lambda: os.remove(test_out_json) if os.path.exists(test_out_json) else None)
+        data = export_production_json(json_path=test_out_json, as_of_date="2026-09-12")
         kpis = data["kpis"]
         self.assertIn("fg_buffer_cans", kpis)
         self.assertIn("fg_buffer_pallets", kpis)
@@ -156,7 +160,7 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
             self.assertEqual(ord_item["fg_stock"], expected_fg)
 
     def test_excel_to_sqlite_sync(self):
-        """Verify synchronization of shift entries from Excel into SQLite without COM."""
+        """Verify synchronization of shift entries from Excel into SQLite without COM, ensuring full isolation and edge-case handling."""
         import openpyxl
 
         test_db = os.path.join(os.path.dirname(__file__), 'data', 'test_sync.db')
@@ -168,26 +172,60 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
         # Set up a test DB
         seed_master_data(test_db, force_reseed=True, demo_data=False)
 
-        # Create a test Excel workbook
+        # Create a test Excel workbook with comma numbers, flexible dates, reconciliation, and new POF
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Data_Entry"
         ws.append(["AEROSOL PLANT DAILY PRODUCTION DATA ENTRY"])
         ws.append(["Date", "Machine", "POF #", "Product Name", "PID", "Customer", "Total Production\n(pcs)", "Good Production\n(pcs)", "Rejects\n(pcs)", "Rejection\n%", "DownTime", "Remarks"])
-        ws.append(["2026-09-12", "Press", "POF-2026-001", "AEROSOL CAN 45x160", 5002, "Aerosol Customer", 12400, 12000, 400, "3.23%", 0.5, "Washer nozzle clean - Tariq Mahmood"])
+        # Row 3: Comma-formatted numbers, text date "12-Sep-2026", supervisor in remarks
+        ws.append(["12-Sep-2026", "Press", "POF-2026-001", "AEROSOL CAN 45x160", 5002, "Aerosol Customer", "12,400", "12,000", "400", "3.23%", 0.5, "Washer nozzle clean - Tariq Mahmood"])
+        # Row 4: Reconciled quantities (good is None), Shift B (Night), New POF-2026-002, 45x150
+        ws.append(["2026-09-13", "Printing", "POF-2026-002", "AEROSOL CAN 45x150", 9003, "New Brand Inc", 15000, None, 500, "3.33%", 1.0, "Shift B ink viscosity - M. Aslam"])
         wb.save(test_xlsx)
 
-        # Run sync
-        res1 = sync_excel_to_db(test_xlsx, test_db)
+        # Run sync passing test_json to guarantee isolation
+        res1 = sync_excel_to_db(test_xlsx, test_db, test_json)
         self.assertEqual(res1["status"], "success")
-        self.assertEqual(res1["shifts_imported"], 1)
+        self.assertEqual(res1["shifts_imported"], 2)
         self.assertEqual(res1["skipped_duplicates"], 0)
 
+        # Verify test_json was created and master production.json was not mutated
+        self.assertTrue(os.path.exists(test_json))
+        with open(test_json, 'r', encoding='utf-8') as f:
+            t_data = json.load(f)
+        self.assertEqual(len(t_data["orders"]), 2)
+        self.assertEqual(t_data["kpis"]["latest_shift"]["good_cans"], 14500)
+
+        # Verify DB records
+        conn = get_connection(test_db)
+        cur = conn.cursor()
+        cur.execute("SELECT s.*, o.pof_number, o.customer_name FROM shifts s JOIN orders o ON s.pof_id = o.id WHERE s.id > 1 ORDER BY s.id ASC;")
+        shifts = [dict(r) for r in cur.fetchall()]
+        conn.close()
+
+        # Check Row 3 parsed correctly with commas and date
+        self.assertEqual(shifts[0]["good_cans"], 12000)
+        self.assertEqual(shifts[0]["line_scrap"], 400)
+        self.assertEqual(shifts[0]["shift_date"], "2026-09-12")
+        self.assertEqual(shifts[0]["shift_type"], "Day")
+        self.assertEqual(shifts[0]["supervisor"], "Tariq Mahmood")
+        self.assertEqual(shifts[0]["downtime_reason"], "Washer nozzle clean")
+
+        # Check Row 4 reconciled good = total - scrap (15000 - 500 = 14500), Shift B = Night, new POF
+        self.assertEqual(shifts[1]["good_cans"], 14500)
+        self.assertEqual(shifts[1]["line_scrap"], 500)
+        self.assertEqual(shifts[1]["shift_type"], "Night")
+        self.assertEqual(shifts[1]["pof_number"], "POF-2026-002")
+        self.assertEqual(shifts[1]["customer_name"], "New Brand Inc")
+        self.assertEqual(shifts[1]["product_size"], "45x150mm")
+        self.assertEqual(shifts[1]["supervisor"], "M. Aslam")
+
         # Verify idempotence on second sync
-        res2 = sync_excel_to_db(test_xlsx, test_db)
+        res2 = sync_excel_to_db(test_xlsx, test_db, test_json)
         self.assertEqual(res2["status"], "success")
         self.assertEqual(res2["shifts_imported"], 0)
-        self.assertEqual(res2["skipped_duplicates"], 1)
+        self.assertEqual(res2["skipped_duplicates"], 2)
 
 if __name__ == "__main__":
     unittest.main()

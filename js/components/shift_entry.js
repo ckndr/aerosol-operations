@@ -377,6 +377,15 @@ async function handleShiftSubmit(event) {
     };
     if (!AppState.data.shifts) AppState.data.shifts = [];
     AppState.data.shifts.unshift(clientShift);
+    if (pof) {
+      pof.produced_good = (pof.produced_good || 0) + payload.good_cans;
+      pof.produced_scrap = (pof.produced_scrap || 0) + payload.line_scrap;
+      pof.total_line_run = pof.produced_good + pof.produced_scrap;
+      pof.remaining_qty = Math.max(0, pof.order_qty - pof.produced_good);
+      pof.fg_stock = Math.max(0, (pof.produced_good || 0) - (pof.dispatched_total || 0));
+      pof.completion_pct = parseFloat(((pof.produced_good / pof.order_qty) * 100).toFixed(1));
+      pof.is_within_tolerance = (pof.produced_good >= (pof.min_acceptable_qty || 0) && pof.produced_good <= (pof.max_acceptable_qty || Infinity));
+    }
     if (AppState.data.kpis) {
       AppState.data.kpis.today_output_cans = (AppState.data.kpis.today_output_cans || 0) + payload.good_cans;
       AppState.data.kpis.today_scrap_cans = (AppState.data.kpis.today_scrap_cans || 0) + payload.line_scrap;
@@ -387,13 +396,21 @@ async function handleShiftSubmit(event) {
       const mtdTotal = AppState.data.kpis.mtd_output_cans + AppState.data.kpis.mtd_scrap_cans;
       AppState.data.kpis.mtd_scrap_pct = mtdTotal > 0 ? parseFloat(((AppState.data.kpis.mtd_scrap_cans / mtdTotal) * 100).toFixed(2)) : 0.0;
       AppState.data.kpis.downtime_hours_mtd = parseFloat(((AppState.data.kpis.downtime_hours_mtd || 0) + payload.downtime_hours).toFixed(2));
-    }
-    if (pof) {
-      pof.produced_good = (pof.produced_good || 0) + payload.good_cans;
-      pof.produced_scrap = (pof.produced_scrap || 0) + payload.line_scrap;
-      pof.total_line_run = pof.produced_good + pof.produced_scrap;
-      pof.remaining_qty = Math.max(0, pof.order_qty - pof.produced_good);
-      pof.completion_pct = parseFloat(((pof.produced_good / pof.order_qty) * 100).toFixed(1));
+
+      const totalFgCans = (AppState.data.orders || []).reduce((acc, o) => acc + Math.max(0, (o.produced_good || 0) - (o.dispatched_total || 0)), 0);
+      AppState.data.kpis.fg_buffer_cans = totalFgCans;
+      AppState.data.kpis.fg_buffer_pallets = parseFloat((totalFgCans / 3000.0).toFixed(1));
+
+      AppState.data.kpis.latest_shift = {
+        good_cans: payload.good_cans,
+        line_scrap: payload.line_scrap,
+        scrap_pct: scrapPct,
+        shift_date: payload.shift_date,
+        shift_type: payload.shift_type,
+        supervisor: payload.supervisor,
+        pof_number: pof ? pof.pof_number : `POF-${payload.pof_id}`,
+        customer_name: pof ? pof.customer_name : 'Alpha Customer'
+      };
     }
     window.dispatchEvent(new CustomEvent('app:state-changed', { detail: AppState.data }));
 
