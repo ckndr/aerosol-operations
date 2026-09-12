@@ -21,7 +21,19 @@ const DEFAULT_PRE_PRODUCTION_DATA = {
     today_dispatches_cans: 0,
     today_dispatches_count: 0,
     active_pofs_count: 1,
-    downtime_hours_mtd: 0.0
+    downtime_hours_mtd: 0.0,
+    fg_buffer_cans: 0,
+    fg_buffer_pallets: 0,
+    latest_shift: {
+      good_cans: 0,
+      line_scrap: 0,
+      scrap_pct: 0.0,
+      shift_date: "2026-09-12",
+      shift_type: "Day",
+      supervisor: "Tariq Mahmood",
+      pof_number: "POF-2026-001",
+      customer_name: "Aerosol Customer"
+    }
   },
   orders: [
     {
@@ -42,6 +54,7 @@ const DEFAULT_PRE_PRODUCTION_DATA = {
       produced_scrap: 0,
       total_line_run: 0,
       dispatched_total: 0,
+      fg_stock: 0,
       min_acceptable_qty: 95000,
       max_acceptable_qty: 105000,
       completion_pct: 0.0,

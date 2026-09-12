@@ -666,6 +666,7 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
             "produced_scrap": produced_scrap,
             "total_line_run": total_line_run,
             "dispatched_total": dispatched_total,
+            "fg_stock": max(0, produced_good - dispatched_total),
             "min_acceptable_qty": min_qty,
             "max_acceptable_qty": max_qty,
             "completion_pct": completion_pct,
@@ -801,6 +802,14 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
         if reason and reason != "None" and s.get("downtime_hours", 0.0) > 0:
             downtime_by_reason[reason] = round(downtime_by_reason.get(reason, 0.0) + s["downtime_hours"], 2)
 
+    # Latest Completed Shift (fixing the morning zero trap)
+    completed_shifts = [s for s in shifts if (s.get("good_cans", 0) > 0 or s.get("line_scrap", 0) > 0)]
+    latest_shift = completed_shifts[0] if completed_shifts else (shifts[0] if shifts else None)
+
+    # FG Warehouse Buffer (Finished Goods awaiting dispatch)
+    total_fg_buffer_cans = sum(max(0, o["produced_good"] - o["dispatched_total"]) for o in orders)
+    total_fg_buffer_pallets = round(total_fg_buffer_cans / 3000.0, 1) if total_fg_buffer_cans > 0 else 0.0
+
     payload = {
         "meta": {
             "plant_name": "Alpha Aerosols",
@@ -820,7 +829,19 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
             "today_dispatches_cans": today_dispatched_cans,
             "today_dispatches_count": today_dispatches_count,
             "active_pofs_count": len(active_pofs),
-            "downtime_hours_mtd": round(sum(s["downtime_hours"] for s in mtd_shifts), 1)
+            "downtime_hours_mtd": round(sum(s["downtime_hours"] for s in mtd_shifts), 1),
+            "fg_buffer_cans": total_fg_buffer_cans,
+            "fg_buffer_pallets": total_fg_buffer_pallets,
+            "latest_shift": {
+                "good_cans": latest_shift["good_cans"] if latest_shift else 0,
+                "line_scrap": latest_shift["line_scrap"] if latest_shift else 0,
+                "scrap_pct": latest_shift["scrap_pct"] if latest_shift else 0.0,
+                "shift_date": latest_shift["shift_date"] if latest_shift else ref_date_str,
+                "shift_type": latest_shift["shift_type"] if latest_shift else "Day",
+                "supervisor": latest_shift["supervisor"] if latest_shift else "Tariq Mahmood",
+                "pof_number": latest_shift.get("pof_number") or (active_pofs[0]["pof_number"] if active_pofs else "-"),
+                "customer_name": latest_shift.get("customer_name") or (active_pofs[0]["customer_name"] if active_pofs else "-")
+            } if latest_shift else None
         },
         "orders": orders,
         "shifts": shifts,
@@ -1130,9 +1151,260 @@ def export_job_card_excel(pof_id: int, output_path: str, db_path: Optional[str] 
     wb.save(output_path)
     return output_path
 
+def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Synchronizes shift production records from an Excel workbook into aerosol.db (SQLite WAL).
+    Enforces Zero Windows COM Automation (pure Python openpyxl).
+    Deducts raw materials via physical yield-inverse mass balance.
+    Auto-refreshes data/production.json.
+    """
+    if db_path is None:
+        db_path = DB_PATH
+    if not os.path.exists(excel_path):
+        raise FileNotFoundError(f"Excel workbook not found: {excel_path}")
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
+
+    # Choose target sheet
+    target_sheet_name = None
+    for name in ["Data_Entry", "Daily_Production", "Production", "Shifts"]:
+        if name in wb.sheetnames:
+            target_sheet_name = name
+            break
+    ws = wb[target_sheet_name] if target_sheet_name else wb.active
+
+    # Identify header row (scanning first 6 rows)
+    header_row_idx = None
+    headers = {}
+    for r in range(1, min(7, ws.max_row + 1)):
+        row_vals = [ws.cell(row=r, column=c).value for c in range(1, min(20, ws.max_column + 1))]
+        str_vals = [str(v).lower().strip() for v in row_vals if v is not None]
+        if any("date" in s for s in str_vals) and (any("good" in s or "total" in s or "pof" in s for s in str_vals)):
+            header_row_idx = r
+            for c in range(1, min(20, ws.max_column + 1)):
+                val = ws.cell(row=r, column=c).value
+                if val:
+                    clean_header = str(val).lower().replace('\n', ' ').strip()
+                    headers[clean_header] = c
+            break
+
+    if not header_row_idx:
+        return {
+            "status": "error",
+            "message": "Could not identify valid header row in Excel worksheet.",
+            "shifts_imported": 0,
+            "skipped_duplicates": 0,
+            "skipped_empty": 0
+        }
+
+    def get_col_val(row_idx, keywords):
+        for h_text, col_idx in headers.items():
+            if any(k in h_text for k in keywords):
+                return ws.cell(row=row_idx, column=col_idx).value
+        return None
+
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+
+    shifts_imported = 0
+    skipped_duplicates = 0
+    skipped_empty = 0
+
+    now_iso = datetime.now().isoformat()
+
+    for r in range(header_row_idx + 1, ws.max_row + 1):
+        raw_date = get_col_val(r, ["date"])
+        raw_pof = get_col_val(r, ["pof", "order"])
+        raw_product = get_col_val(r, ["product"])
+        raw_good = get_col_val(r, ["good"])
+        raw_rejects = get_col_val(r, ["reject", "scrap"])
+        raw_total = get_col_val(r, ["total"])
+        raw_downtime = get_col_val(r, ["down"])
+        raw_remarks = get_col_val(r, ["remark", "reason"])
+        raw_supervisor = get_col_val(r, ["supervisor", "lead"])
+        raw_shift = get_col_val(r, ["shift"])
+        raw_customer = get_col_val(r, ["customer"])
+
+        # Check if row is empty or template row
+        if raw_date is None and raw_good is None and raw_total is None:
+            skipped_empty += 1
+            continue
+
+        # Parse date
+        shift_date = None
+        if isinstance(raw_date, (datetime, date)):
+            shift_date = raw_date.strftime("%Y-%m-%d")
+        elif isinstance(raw_date, str) and raw_date.strip():
+            date_clean = raw_date.strip()
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+                try:
+                    shift_date = datetime.strptime(date_clean, fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    pass
+        if not shift_date:
+            skipped_empty += 1
+            continue
+
+        # Parse numbers
+        try:
+            good_cans = int(round(float(raw_good))) if raw_good is not None else 0
+        except (ValueError, TypeError):
+            good_cans = 0
+
+        try:
+            line_scrap = int(round(float(raw_rejects))) if raw_rejects is not None else 0
+        except (ValueError, TypeError):
+            line_scrap = 0
+
+        try:
+            total_cans = int(round(float(raw_total))) if raw_total is not None else 0
+        except (ValueError, TypeError):
+            total_cans = 0
+
+        if good_cans == 0 and line_scrap == 0:
+            if total_cans > 0:
+                good_cans = total_cans
+            else:
+                skipped_empty += 1
+                continue
+
+        # Resolve POF and Order
+        pof_id = None
+        product_size = None
+        pof_str = str(raw_pof).strip() if raw_pof is not None else ""
+        if pof_str:
+            cur.execute("SELECT id, product_size FROM orders WHERE pof_number = ? OR pof_number = ? OR id = ?;",
+                        (pof_str, f"POF-{pof_str}", pof_str))
+            matched_order = cur.fetchone()
+            if matched_order:
+                pof_id = matched_order["id"]
+                product_size = matched_order["product_size"]
+
+        if not pof_id:
+            cust_str = str(raw_customer).strip() if raw_customer else ""
+            if cust_str:
+                cur.execute("SELECT id, product_size FROM orders WHERE customer_name LIKE ?;", (f"%{cust_str}%",))
+                matched_order = cur.fetchone()
+                if matched_order:
+                    pof_id = matched_order["id"]
+                    product_size = matched_order["product_size"]
+
+        if not pof_id:
+            cur.execute("SELECT id, product_size FROM orders ORDER BY id ASC LIMIT 1;")
+            first_ord = cur.fetchone()
+            if first_ord:
+                pof_id = first_ord["id"]
+                product_size = first_ord["product_size"]
+            else:
+                new_pof_num = pof_str if pof_str else "POF-2026-001"
+                cur.execute("""
+                INSERT INTO orders (pof_number, customer_name, product_name, product_size, order_qty, tolerance_pct, order_date, due_date, status, created_at)
+                VALUES (?, ?, ?, '45x160mm', 100000, 0.05, ?, ?, 'In Production', ?);
+                """, (new_pof_num, cust_str or "Aerosol Customer", str(raw_product) or "Aerosol Container 45x160mm", shift_date, shift_date, now_iso))
+                pof_id = cur.lastrowid
+                product_size = "45x160mm"
+
+        if not product_size:
+            p_text = f"{raw_product or ''} {raw_remarks or ''}"
+            product_size = "45x150mm" if "150" in p_text else "45x160mm"
+
+        # Shift type
+        shift_type = "Day"
+        if raw_shift and str(raw_shift).strip().lower().startswith("n"):
+            shift_type = "Night"
+        elif raw_remarks and "night" in str(raw_remarks).lower():
+            shift_type = "Night"
+
+        # Downtime hours and reason
+        try:
+            downtime_hours = float(raw_downtime) if raw_downtime is not None else 0.0
+        except (ValueError, TypeError):
+            downtime_hours = 0.0
+
+        downtime_reason = str(raw_remarks).strip() if raw_remarks else "None"
+
+        # Supervisor
+        supervisor = "Tariq Mahmood"
+        if raw_supervisor:
+            supervisor = str(raw_supervisor).strip()
+        elif raw_remarks:
+            for s_name in ["Tariq Mahmood", "M. Aslam", "Sikander"]:
+                if s_name.lower() in str(raw_remarks).lower():
+                    supervisor = s_name
+                    break
+
+        # Check for duplicate shift to ensure idempotence
+        cur.execute("""
+        SELECT id FROM shifts
+        WHERE shift_date = ? AND shift_type = ? AND pof_id = ? AND good_cans = ? AND line_scrap = ?;
+        """, (shift_date, shift_type, pof_id, good_cans, line_scrap))
+        if cur.fetchone():
+            skipped_duplicates += 1
+            continue
+
+        # Insert shift
+        cur.execute("""
+        INSERT INTO shifts (
+            shift_date, shift_type, pof_id, product_size, good_cans,
+            line_scrap, downtime_hours, downtime_reason, supervisor, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (shift_date, shift_type, pof_id, product_size, good_cans, line_scrap, downtime_hours, downtime_reason, supervisor, now_iso))
+
+        # Deduct raw material consumption
+        bom_calc = calculate_bom(product_size, good_cans)
+        for itm in bom_calc["items"]:
+            consumed_qty = itm["gross_total"]
+            cur.execute("""
+            UPDATE inventory
+            SET balance_qty = MAX(0.0, balance_qty - ?),
+                updated_at = ?
+            WHERE item_code = ?;
+            """, (consumed_qty, now_iso, itm["item_code"]))
+
+        shifts_imported += 1
+
+    conn.commit()
+    conn.close()
+
+    # Re-export JSON
+    export_production_json(db_path)
+
+    return {
+        "status": "success",
+        "file": excel_path,
+        "shifts_imported": shifts_imported,
+        "skipped_duplicates": skipped_duplicates,
+        "skipped_empty": skipped_empty
+    }
+
 if __name__ == "__main__":
-    print("Initializing Alpha Aerosols Database Engine...")
-    seed_master_data()
-    data = export_production_json()
-    print(f"Data engine ready. Today output: {data['kpis']['today_output_cans']:,} cans.")
-    print(f"JSON snapshot saved at: {JSON_PATH}")
+    import argparse
+    parser = argparse.ArgumentParser(description="Alpha Aerosols Production Engine & Data Sync")
+    parser.add_argument("--sync-excel", nargs="?", const="Aerosol_Production_Entry.xlsx", default=None,
+                        help="Sync production data from Excel workbook into SQLite database and update production.json")
+    parser.add_argument("--export-json", action="store_true", help="Re-export production.json snapshot from SQLite")
+    parser.add_argument("--reseed", action="store_true", help="Reseed database with clean master baseline")
+    parser.add_argument("--demo", action="store_true", help="Seed with demo historical shifts for testing")
+    args = parser.parse_args()
+
+    if args.sync_excel is not None:
+        print(f"Syncing production records from Excel: {args.sync_excel}...")
+        result = sync_excel_to_db(args.sync_excel)
+        print(f"Excel Sync Complete: {result}")
+    elif args.reseed:
+        print("Reseeding master database...")
+        seed_master_data(force_reseed=True, demo_data=args.demo)
+        export_production_json()
+        print("Database reseeded successfully.")
+    elif args.export_json:
+        export_production_json()
+        print(f"JSON snapshot updated at {JSON_PATH}")
+    else:
+        print("Initializing Alpha Aerosols Database Engine...")
+        seed_master_data(demo_data=False)
+        data = export_production_json()
+        print(f"Data engine ready. Today output: {data['kpis']['today_output_cans']:,} cans.")
+        print(f"JSON snapshot saved at: {JSON_PATH}")

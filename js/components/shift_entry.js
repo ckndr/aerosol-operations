@@ -158,6 +158,69 @@ function renderShiftEntry(data) {
           </form>
         </div>
       </div>
+
+      <!-- Floor Shift History Table -->
+      <div class="panel" style="margin-top: 24px;">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>Floor Shift History Log</span>
+            <small>Single-Stage Verification • Final Saleable Cans Counted at Packing Stage</small>
+          </div>
+          <span class="badge badge-steel">${(data.shifts || []).length} Logged Shifts</span>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Date & Shift</th>
+                <th>POF # & Customer</th>
+                <th>Size</th>
+                <th class="num">Good Cans</th>
+                <th class="num">Line Scrap</th>
+                <th class="num">Scrap %</th>
+                <th>Downtime Reason</th>
+                <th>Supervisor</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(data.shifts || []).length === 0 ? `
+                <tr>
+                  <td colspan="8" style="text-align:center; padding: 36px 16px; color: var(--text-dim);">
+                    <div style="font-size: 28px; margin-bottom: 6px;">🏭</div>
+                    <div style="font-weight: 600; color: var(--text-main); font-size: 14px; margin-bottom: 4px;">No floor shifts logged yet</div>
+                    <div style="font-size: 12px; color: var(--text-muted); max-width: 440px; margin: 0 auto;">Plant is configured in pre-production readiness mode. Floor entries logged via the form above will be recorded here immediately.</div>
+                  </td>
+                </tr>
+              ` : (data.shifts || []).map(s => {
+                const badgeStyle = s.scrap_pct >= 5.0 ? 'badge-red' : (s.scrap_pct >= 3.5 ? 'badge-amber' : 'badge-emerald');
+                const shiftPill = s.shift_type === 'Day' ? '<span class="badge badge-amber">DAY</span>' : '<span class="badge badge-steel">NIGHT</span>';
+                return `
+                  <tr>
+                    <td>
+                      <div style="font-weight: 600;">${formatDate(s.shift_date)}</div>
+                      <div>${shiftPill}</div>
+                    </td>
+                    <td>
+                      <div style="font-weight: 600; color: var(--color-amber);">${s.pof_number || 'POF-' + s.pof_id}</div>
+                      <div style="font-size: 11px; color: var(--text-muted);">${s.customer_name || 'Alpha Standard'}</div>
+                    </td>
+                    <td><span class="badge badge-steel">${s.product_size}</span></td>
+                    <td class="num" style="font-weight: bold; color: var(--color-emerald);">${formatNumber(s.good_cans)}</td>
+                    <td class="num" style="color: var(--text-muted);">${formatNumber(s.line_scrap)}</td>
+                    <td class="num"><span class="badge ${badgeStyle}">${s.scrap_pct}%</span></td>
+                    <td>
+                      <div>${s.downtime_reason || 'None'}</div>
+                      <small style="color: var(--text-dim);">${s.downtime_hours > 0 ? s.downtime_hours + ' hrs stoppage' : 'Full continuous run'}</small>
+                    </td>
+                    <td style="color: var(--text-main); font-weight: 500;">${s.supervisor}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
   `;
 }

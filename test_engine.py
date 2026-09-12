@@ -16,6 +16,8 @@ from engine import (
     create_dispatch,
     export_job_card_excel,
     export_production_json,
+    sync_excel_to_db,
+    seed_master_data,
     DB_PATH,
     JSON_PATH
 )
@@ -136,6 +138,56 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
         export_job_card_excel(1, test_out)
         self.assertTrue(os.path.exists(test_out))
         self.assertGreater(os.path.getsize(test_out), 4000)
+
+    def test_fg_stock_and_latest_shift_kpis(self):
+        """Verify fg_stock per order and fg_buffer_cans, latest_shift in KPIs."""
+        data = export_production_json(as_of_date="2026-09-12")
+        kpis = data["kpis"]
+        self.assertIn("fg_buffer_cans", kpis)
+        self.assertIn("fg_buffer_pallets", kpis)
+        self.assertIn("latest_shift", kpis)
+        self.assertIsInstance(kpis["latest_shift"], dict)
+        self.assertIn("good_cans", kpis["latest_shift"])
+        self.assertIn("supervisor", kpis["latest_shift"])
+
+        for ord_item in data["orders"]:
+            self.assertIn("fg_stock", ord_item)
+            expected_fg = max(0, ord_item["produced_good"] - ord_item["dispatched_total"])
+            self.assertEqual(ord_item["fg_stock"], expected_fg)
+
+    def test_excel_to_sqlite_sync(self):
+        """Verify synchronization of shift entries from Excel into SQLite without COM."""
+        import openpyxl
+
+        test_db = os.path.join(os.path.dirname(__file__), 'data', 'test_sync.db')
+        test_json = os.path.join(os.path.dirname(__file__), 'data', 'test_sync.json')
+        test_xlsx = os.path.join(os.path.dirname(__file__), 'data', 'test_entry.xlsx')
+
+        self.addCleanup(lambda: [os.remove(p) for p in [test_db, test_db+'-wal', test_db+'-shm', test_json, test_xlsx] if os.path.exists(p)])
+
+        # Set up a test DB
+        seed_master_data(test_db, force_reseed=True, demo_data=False)
+
+        # Create a test Excel workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data_Entry"
+        ws.append(["AEROSOL PLANT DAILY PRODUCTION DATA ENTRY"])
+        ws.append(["Date", "Machine", "POF #", "Product Name", "PID", "Customer", "Total Production\n(pcs)", "Good Production\n(pcs)", "Rejects\n(pcs)", "Rejection\n%", "DownTime", "Remarks"])
+        ws.append(["2026-09-12", "Press", "POF-2026-001", "AEROSOL CAN 45x160", 5002, "Aerosol Customer", 12400, 12000, 400, "3.23%", 0.5, "Washer nozzle clean - Tariq Mahmood"])
+        wb.save(test_xlsx)
+
+        # Run sync
+        res1 = sync_excel_to_db(test_xlsx, test_db)
+        self.assertEqual(res1["status"], "success")
+        self.assertEqual(res1["shifts_imported"], 1)
+        self.assertEqual(res1["skipped_duplicates"], 0)
+
+        # Verify idempotence on second sync
+        res2 = sync_excel_to_db(test_xlsx, test_db)
+        self.assertEqual(res2["status"], "success")
+        self.assertEqual(res2["shifts_imported"], 0)
+        self.assertEqual(res2["skipped_duplicates"], 1)
 
 if __name__ == "__main__":
     unittest.main()
