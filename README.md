@@ -1,15 +1,33 @@
-# Alpha Aerosols Kot Abdul Malik (Commissioning & Operations)
+﻿# Alpha Aerosols Kot Abdul Malik (Operations & Production Management)
 
-Master manufacturing and ERP operations project for **Alpha Aerosols (Kot Abdul Malik)**, specializing in monobloc aluminum aerosol container production (45 × 160 mm and 45 × 150 mm).
+Master manufacturing operations, ERP planning, and executive production portal for **Alpha Aerosols (Kot Abdul Malik)**, specializing in monobloc aluminum aerosol container production (45 × 160 mm and 45 × 150 mm).
 
 ## Operational Context
 - **Plant Location**: Kot Abdul Malik, Punjab, Pakistan
-- **Planning & Procurement Lead**: Sikander (On-site at Kot Abdul Malik; manages Tubex Lahore remotely)
-- **Status**: Plant Commissioning (Commercial Launch in ~30 Days / October 2026)
-- **Project Structure**:
-  - `C:\Aerosol-Tracker`: Plant Commissioning Tracker App (Milestones PWA)
-  - `D:\Aerosol`: Manufacturing Operations, BOMs, Job Cards, SOPs (This Project)
+- **Planning & Procurement Lead**: Sikander (On-site at Kot Abdul Malik; reports to Production Manager; manages Tubex Lahore remotely)
+- **Status**: Commissioning Phase (Commercial Launch Target: ~30 Days / October 2026)
+- **Primary Web Application**: `aerosol.html` (Executive Operations & Launch Readiness Portal)
 - **System Rules**: See [AGENTS.md](file:///d:/Aerosol/AGENTS.md) and [PROJECT_CONTEXT.md](file:///d:/Aerosol/PROJECT_CONTEXT.md)
+
+---
+
+## The Aerosol Operations Web Application (`aerosol.html`)
+Engineered to mirror the proven, luxury executive aesthetic of Tubex while tailored specifically to monobloc aerosol manufacturing:
+- **Design Framework**: Luxury dark navy (`#0d1f3c`) and gold (`#e8a020`), `DM Serif Display` typography, and fully responsive PWA support.
+- **Ported Tubex Modules**:
+  - Executive KPI Dashboard (Daily Output, Good Cans, Scrap %, Line Speed / OEE, Monthly Progress).
+  - Customer Order Tracker & POF Table (Order Qty, Tolerance %, Artwork Approval, Delivery Due Dates).
+  - Machine-wise Daily Shift Logging (Extrusion & Wash, Coating & Printing, Finishing & Packing).
+  - Raw Material Inventory Ledger (Stock on Hand, Daily Burn, Safety Stock Alerts).
+  - Scrap Pareto Breakdown (Extrusion Splits, Lacquer Blisters, Print Smudges, Neck Wrinkles).
+  - Finished Goods Dispatches & Delivery Challan Reconciliation.
+- **Pre-Production Startup Enhancements**:
+  - **84% Commercial Launch Readiness Gauge** with live milestone tracking.
+  - **Raw Material Runway (Days of Production)** dynamically calculated from warehouse stock.
+  - **12-Machine Monobloc Line Matrix** with mechanical calibration specs.
+  - **Commissioning Quality Trial Log** (WACO Enamel Rater, Burst Pressure, MEK Rubs).
+  - **Interactive Customer Order & BOM Estimator** for instant commercial quotes.
+  - **Instant Go-Live Toggle** for seamless Day 1 operational transition.
 
 ---
 
