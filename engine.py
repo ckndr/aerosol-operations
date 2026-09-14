@@ -56,7 +56,9 @@ def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     """Returns a SQLite connection configured with WAL mode and foreign keys enabled."""
     if db_path is None:
         db_path = DB_PATH
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL;")
@@ -818,6 +820,7 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
             "plant_name": "Alpha Aerosols",
             "location": "Kot Abdul Malik, Punjab, Pakistan",
             "as_of_date": ref_date_str,
+            "active_workbook": get_monthly_workbook_name(ref_date),
             "generated_at": datetime.now().isoformat(),
             "version": "2.0.0",
             "sqlite_mode": "WAL"
@@ -1197,6 +1200,26 @@ def parse_clean_date(val: Any) -> Optional[str]:
             pass
     return None
 
+def normalize_pof(val: Any) -> str:
+    """
+    Normalizes various POF representations into a canonical comparable key.
+    E.g.: 'POF-2026-081', 'POF-081', '81', 81, 'POF 81', 'POF # 81' -> '81'
+    'POF-2026-001' -> '1'
+    'POF-SPECIAL-A' -> 'SPECIAL-A'
+    """
+    if val is None:
+        return ""
+    s = str(val).strip().upper()
+    if not s:
+        return ""
+    s = re.sub(r"^POF\s*#?[\s\-_]*", "", s)
+    m = re.match(r"^\d{4}[\-_](\d+)$", s)
+    if m:
+        return str(int(m.group(1)))
+    if s.isdigit():
+        return str(int(s))
+    return s
+
 def get_monthly_workbook_name(target_date: Optional[Union[str, date, datetime]] = None) -> str:
     """
     Returns monthly workbook name formatted as Aerosol_MmmYY.xlsx (e.g., Aerosol_Sep26.xlsx).
@@ -1204,15 +1227,28 @@ def get_monthly_workbook_name(target_date: Optional[Union[str, date, datetime]] 
     """
     if target_date is None:
         dt = datetime.now()
-    elif isinstance(target_date, str):
-        try:
-            dt = datetime.strptime(target_date[:10], "%Y-%m-%d")
-        except Exception:
-            dt = datetime.now()
     elif isinstance(target_date, datetime):
         dt = target_date
     elif isinstance(target_date, date):
         dt = datetime.combine(target_date, datetime.min.time())
+    elif isinstance(target_date, str):
+        target_str = target_date.strip()
+        dt = None
+        for fmt in ("%Y-%m-%d", "%Y-%m", "%b%y", "%b-%y", "%B%Y", "%d-%b-%Y", "%d/%m/%Y"):
+            try:
+                dt = datetime.strptime(target_str[:10] if len(target_str) >= 10 else target_str, fmt)
+                break
+            except Exception:
+                pass
+        if dt is None:
+            m = re.search(r"([A-Za-z]{3}\d{2})", target_str)
+            if m:
+                try:
+                    dt = datetime.strptime(m.group(1), "%b%y")
+                except Exception:
+                    pass
+        if dt is None:
+            dt = datetime.now()
     else:
         dt = datetime.now()
 
@@ -1227,18 +1263,17 @@ def get_active_aerosol_workbook(
     Resolves the active monthly Aerosol workbook following the Tubex convention.
     Priority hierarchy:
     1. Exact target month file (e.g. Aerosol_Sep26.xlsx) in base_dir.
-    2. Latest monthly file matching Aerosol_[A-Za-z]{3}\d{2}.xlsx (excluding temp lock ~$ files).
-    3. Fallback master template: Aerosol_Production_Entry.xlsx in base_dir.
-    4. If create_if_missing is True, copies template or creates clean workbook.
+    2. If create_if_missing is True, initializes target month workbook from template or blank.
+    3. Chronologically latest monthly file matching Aerosol_[A-Za-z]{3}\d{2}.xlsx (excluding temp lock ~$ files).
+    4. Fallback master template: Aerosol_Production_Entry.xlsx in base_dir.
     """
     if base_dir is None:
         base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Ensure base_dir points to project root where Excel files reside
-    if not os.path.exists(os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")):
-        project_root = os.path.dirname(os.path.abspath(__file__))
-        if os.path.exists(os.path.join(project_root, "Aerosol_Production_Entry.xlsx")):
-            base_dir = project_root
+        # Ensure base_dir points to project root where Excel files reside
+        if not os.path.exists(os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")):
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            if os.path.exists(os.path.join(project_root, "Aerosol_Production_Entry.xlsx")):
+                base_dir = project_root
 
     target_name = get_monthly_workbook_name(target_date)
     exact_path = os.path.join(base_dir, target_name)
@@ -1247,31 +1282,16 @@ def get_active_aerosol_workbook(
     if os.path.exists(exact_path):
         return exact_path
 
-    # 2. Check for any existing monthly workbooks
-    pattern = re.compile(r"^Aerosol_([A-Za-z]{3}\d{2})\.xlsx$", re.IGNORECASE)
-    candidates = []
-    for f in glob.glob(os.path.join(base_dir, "Aerosol_*.xlsx")):
-        fn = os.path.basename(f)
-        if fn.startswith("~$"):
-            continue
-        if pattern.match(fn):
-            candidates.append(f)
-    if candidates:
-        return sorted(candidates)[-1]
-
-    # 3. Fallback to Aerosol_Production_Entry.xlsx
-    fallback_path = os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")
-    if os.path.exists(fallback_path):
-        if create_if_missing:
+    # 2. If create_if_missing is True, create exact_path from template
+    if create_if_missing:
+        fallback_tmpl = os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")
+        if os.path.exists(fallback_tmpl):
             try:
-                shutil.copyfile(fallback_path, exact_path)
+                shutil.copyfile(fallback_tmpl, exact_path)
                 return exact_path
             except Exception:
-                return fallback_path
-        return fallback_path
-
-    # 4. If create_if_missing and no template exists, create blank workbook with Data_Entry
-    if create_if_missing:
+                pass
+        # If no template exists, create blank workbook with Data_Entry
         import openpyxl
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -1286,6 +1306,30 @@ def get_active_aerosol_workbook(
             ws.cell(row=2, column=col_idx, value=h)
         wb.save(exact_path)
         return exact_path
+
+    # 3. Check for existing monthly workbooks (sorted chronologically)
+    pattern = re.compile(r"^Aerosol_([A-Za-z]{3}\d{2})\.xlsx$", re.IGNORECASE)
+    candidates = []
+    for f in glob.glob(os.path.join(base_dir, "Aerosol_*.xlsx")):
+        fn = os.path.basename(f)
+        if fn.startswith("~$"):
+            continue
+        m = pattern.match(fn)
+        if m:
+            try:
+                dt_cand = datetime.strptime(m.group(1), "%b%y")
+            except Exception:
+                dt_cand = datetime.min
+            candidates.append((dt_cand, f))
+
+    if candidates:
+        candidates.sort(key=lambda x: x[0])
+        return candidates[-1][1]
+
+    # 4. Fallback to Aerosol_Production_Entry.xlsx
+    fallback_path = os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")
+    if os.path.exists(fallback_path):
+        return fallback_path
 
     return exact_path
 
@@ -1366,6 +1410,7 @@ def sync_excel_to_db(
     cur = conn.cursor()
 
     shifts_imported = 0
+    shifts_updated = 0
     skipped_duplicates = 0
     skipped_empty = 0
 
@@ -1382,10 +1427,21 @@ def sync_excel_to_db(
         raw_rejects = get_col_val(r, ["reject", "scrap", "waste"], exclude_keywords=["%", "pct", "rate"])
         raw_reject_pct = get_col_val(r, ["rejection %", "reject %", "scrap %", "waste%"])
         raw_total = get_col_val(r, ["total", "target"], exclude_keywords=["%", "pct", "rate", "down"])
-        raw_downtime = get_col_val(r, ["down", "dt"], exclude_keywords=["reason", "remark", "cause"])
         raw_remarks = get_col_val(r, ["remark", "reason", "cause", "notes"])
         raw_supervisor = get_col_val(r, ["supervisor", "lead", "operator"])
         raw_shift = get_col_val(r, ["shift"])
+
+        # Downtime parsing: check all DT columns (e.g. Mechanical DT, Electrical DT, DownTime)
+        total_dt = 0.0
+        dt_subtypes = []
+        for h_text, col_idx in headers.items():
+            if any(k in h_text for k in ["down", "dt"]) and not any(ek in h_text for ek in ["reason", "remark", "cause"]):
+                cell_v = ws.cell(row=r, column=col_idx).value
+                parsed_v = parse_clean_number(cell_v)
+                if parsed_v and parsed_v > 0:
+                    total_dt += parsed_v
+                    col_title = h_text.replace("dt", "DT").title()
+                    dt_subtypes.append(f"{col_title}: {parsed_v}")
 
         # Check if row is empty or template row
         if raw_date is None and raw_good is None and raw_total is None and raw_pof is None:
@@ -1511,9 +1567,11 @@ def sync_excel_to_db(
         else:
             shift_type = "Day"
 
-        # Downtime hours
-        downtime_num = parse_clean_number(raw_downtime)
-        downtime_hours = max(0.0, round(downtime_num, 2)) if downtime_num else 0.0
+        # Downtime hours (convert minutes to hours if > 24, e.g. from Tubex logs)
+        if total_dt > 24.0:
+            downtime_hours = max(0.0, round(total_dt / 60.0, 2))
+        else:
+            downtime_hours = max(0.0, round(total_dt, 2))
 
         # Supervisor resolution
         supervisor = "Tariq Mahmood"
@@ -1535,38 +1593,77 @@ def sync_excel_to_db(
                 for s_name in ["Tariq Mahmood", "M. Aslam", "Sikander", "Production Manager"]:
                     rem_clean = rem_clean.replace(f"- {s_name}", "").replace(f"-{s_name}", "").strip()
                 downtime_reason = rem_clean or ("Normal continuous run" if downtime_hours == 0 else "Unspecified stoppage")
+        elif dt_subtypes:
+            downtime_reason = "; ".join(dt_subtypes)
         elif raw_machine and downtime_hours > 0:
             downtime_reason = f"{raw_machine} stoppage"
 
-        # Check for duplicate shift to ensure idempotence
+        # Check if shift already exists for this (date, shift_type, pof_id)
         cur.execute("""
-        SELECT id FROM shifts
-        WHERE shift_date = ? AND shift_type = ? AND pof_id = ? AND good_cans = ? AND line_scrap = ?;
-        """, (shift_date, shift_type, pof_id, good_cans, line_scrap))
-        if cur.fetchone():
-            skipped_duplicates += 1
-            continue
+        SELECT id, good_cans, line_scrap, downtime_hours, downtime_reason, supervisor, product_size
+        FROM shifts
+        WHERE shift_date = ? AND shift_type = ? AND pof_id = ?;
+        """, (shift_date, shift_type, pof_id))
+        existing_shift = cur.fetchone()
 
-        # Insert shift
-        cur.execute("""
-        INSERT INTO shifts (
-            shift_date, shift_type, pof_id, product_size, good_cans,
-            line_scrap, downtime_hours, downtime_reason, supervisor, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """, (shift_date, shift_type, pof_id, product_size, good_cans, line_scrap, downtime_hours, downtime_reason, supervisor, now_iso))
+        if existing_shift:
+            old_good = existing_shift["good_cans"]
+            old_scrap = existing_shift["line_scrap"]
+            old_dt = existing_shift["downtime_hours"]
 
-        # Deduct raw material consumption via yield-inverse mass balance
-        bom_calc = calculate_bom(product_size, good_cans)
-        for itm in bom_calc["items"]:
-            consumed_qty = itm["gross_total"]
+            # If identical within tolerance, skip
+            if old_good == good_cans and old_scrap == line_scrap and abs(old_dt - downtime_hours) < 0.01:
+                skipped_duplicates += 1
+                continue
+
+            # Existing shift has updated quantities or downtime in Excel!
+            diff_good = good_cans - old_good
             cur.execute("""
-            UPDATE inventory
-            SET balance_qty = MAX(0.0, balance_qty - ?),
-                updated_at = ?
-            WHERE item_code = ?;
-            """, (consumed_qty, now_iso, itm["item_code"]))
+            UPDATE shifts
+            SET good_cans = ?, line_scrap = ?, downtime_hours = ?, downtime_reason = ?, supervisor = ?, product_size = ?
+            WHERE id = ?;
+            """, (good_cans, line_scrap, downtime_hours, downtime_reason, supervisor, product_size, existing_shift["id"]))
 
-        shifts_imported += 1
+            # Reconcile raw material consumption delta via physical mass balance
+            if diff_good != 0:
+                delta_bom = calculate_bom(product_size, abs(diff_good))
+                for itm in delta_bom["items"]:
+                    delta_qty = itm["gross_total"]
+                    if diff_good > 0:
+                        cur.execute("""
+                        UPDATE inventory
+                        SET balance_qty = MAX(0.0, balance_qty - ?), updated_at = ?
+                        WHERE item_code = ?;
+                        """, (delta_qty, now_iso, itm["item_code"]))
+                    else:
+                        cur.execute("""
+                        UPDATE inventory
+                        SET balance_qty = balance_qty + ?, updated_at = ?
+                        WHERE item_code = ?;
+                        """, (delta_qty, now_iso, itm["item_code"]))
+
+            shifts_updated += 1
+        else:
+            # Insert new shift
+            cur.execute("""
+            INSERT INTO shifts (
+                shift_date, shift_type, pof_id, product_size, good_cans,
+                line_scrap, downtime_hours, downtime_reason, supervisor, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (shift_date, shift_type, pof_id, product_size, good_cans, line_scrap, downtime_hours, downtime_reason, supervisor, now_iso))
+
+            # Deduct raw material consumption via yield-inverse mass balance
+            bom_calc = calculate_bom(product_size, good_cans)
+            for itm in bom_calc["items"]:
+                consumed_qty = itm["gross_total"]
+                cur.execute("""
+                UPDATE inventory
+                SET balance_qty = MAX(0.0, balance_qty - ?),
+                    updated_at = ?
+                WHERE item_code = ?;
+                """, (consumed_qty, now_iso, itm["item_code"]))
+
+            shifts_imported += 1
 
     conn.commit()
     conn.close()
@@ -1579,6 +1676,7 @@ def sync_excel_to_db(
         "file": excel_path,
         "filename": os.path.basename(excel_path),
         "shifts_imported": shifts_imported,
+        "shifts_updated": shifts_updated,
         "skipped_duplicates": skipped_duplicates,
         "skipped_empty": skipped_empty
     }
@@ -1686,9 +1784,10 @@ def sync_db_to_excel(
     col_downtime = get_target_col(["down", "dt"], exclude_keywords=["reason", "remark", "cause"], default_col=11)
     col_remarks = get_target_col(["remark", "reason", "cause", "notes"], default_col=12)
 
-    # Scan existing rows for already-recorded shifts
-    existing_keys = set()
-    first_empty_row = None
+    # Scan existing rows for recorded shifts and find last non-empty row
+    existing_by_pof = {}
+    existing_by_date_shift = {}
+    last_data_row = header_row_idx
 
     for r in range(header_row_idx + 1, ws.max_row + 1):
         d_val = ws.cell(row=r, column=col_date).value
@@ -1696,24 +1795,33 @@ def sync_db_to_excel(
         p_val = ws.cell(row=r, column=col_pof).value
         s_val = ws.cell(row=r, column=col_scrap).value
         rem_val = ws.cell(row=r, column=col_remarks).value
+        tot_val = ws.cell(row=r, column=col_total).value
+        dt_val = ws.cell(row=r, column=col_downtime).value
 
-        # Row is empty if Date is blank and Good is blank
-        if (d_val is None or str(d_val).strip() == "") and (g_val is None or str(g_val).strip() == ""):
-            if first_empty_row is None:
-                first_empty_row = r
+        # Row is empty if Date, Good, Total, and POF are all blank
+        if (d_val is None or str(d_val).strip() == "") and \
+           (g_val is None or str(g_val).strip() == "") and \
+           (tot_val is None or str(tot_val).strip() == "") and \
+           (p_val is None or str(p_val).strip() == ""):
             continue
+
+        last_data_row = max(last_data_row, r)
 
         clean_d = parse_clean_date(d_val)
         if clean_d:
             clean_g = int(round(parse_clean_number(g_val) or 0))
             clean_s = int(round(parse_clean_number(s_val) or 0))
-            pof_str = str(p_val or "").strip()
+            clean_dt = float(round(parse_clean_number(dt_val) or 0.0, 2))
+            norm_p = normalize_pof(p_val)
             rem_str = str(rem_val or "").lower()
             st = "Night" if "night" in rem_str else "Day"
-            existing_keys.add((clean_d, st, pof_str, clean_g, clean_s))
 
-    if first_empty_row is None:
-        first_empty_row = max(header_row_idx + 1, ws.max_row + 1)
+            entry = {"row": r, "good": clean_g, "scrap": clean_s, "dt": clean_dt, "norm_pof": norm_p}
+            if norm_p:
+                existing_by_pof[(clean_d, st, norm_p)] = entry
+            if (clean_d, st) not in existing_by_date_shift:
+                existing_by_date_shift[(clean_d, st)] = []
+            existing_by_date_shift[(clean_d, st)].append(entry)
 
     # Read shifts from SQLite
     conn = get_connection(db_path)
@@ -1743,7 +1851,7 @@ def sync_db_to_excel(
             pass
 
     rows_written = 0
-    current_row = first_empty_row
+    rows_updated = 0
 
     for s in shifts:
         s_date = s["shift_date"]
@@ -1756,16 +1864,9 @@ def sync_db_to_excel(
         s_scrap = s["line_scrap"] or 0
         s_total = s_good + s_scrap
         s_pof = s["pof_number"] or f"POF-{s['pof_id']}"
+        s_norm_pof = normalize_pof(s_pof)
         s_st = s["shift_type"] or "Day"
-
-        key = (s_date, s_st, str(s_pof).strip(), s_good, s_scrap)
-        if key in existing_keys:
-            continue
-
-        # Write cells
-        ws.cell(row=current_row, column=col_date, value=s_date)
-        ws.cell(row=current_row, column=col_machine, value="Continuous Line 1")
-        ws.cell(row=current_row, column=col_pof, value=s_pof)
+        s_dt = round(float(s["downtime_hours"] or 0.0), 2)
 
         prod_size = s["product_size"] or "45x160mm"
         pid = 5002 if "160" in prod_size else 5003
@@ -1775,35 +1876,95 @@ def sync_db_to_excel(
         else:
             display_prod = p_name
 
-        ws.cell(row=current_row, column=col_product, value=display_prod)
-        ws.cell(row=current_row, column=col_pid, value=pid)
-        ws.cell(row=current_row, column=col_customer, value=s["customer_name"] or "Alpha Standard")
-
-        c_tot = ws.cell(row=current_row, column=col_total, value=s_total)
-        c_tot.number_format = '#,##0'
-
-        c_good = ws.cell(row=current_row, column=col_good, value=s_good)
-        c_good.number_format = '#,##0'
-
-        c_scrap = ws.cell(row=current_row, column=col_scrap, value=s_scrap)
-        c_scrap.number_format = '#,##0'
-
         scrap_rate = round(s_scrap / s_total, 4) if s_total > 0 else 0.0
-        c_rate = ws.cell(row=current_row, column=col_scrap_pct, value=scrap_rate)
-        c_rate.number_format = '0.00%'
-
-        c_dt = ws.cell(row=current_row, column=col_downtime, value=s["downtime_hours"] or 0.0)
-        c_dt.number_format = '0.00'
-
         rem = f"{s_st} Shift - {s['supervisor'] or 'Line Lead'}"
         dt_reason = s.get("downtime_reason")
         if dt_reason and dt_reason.lower() not in ("none", "normal continuous run", ""):
             rem += f" - {dt_reason}"
-        ws.cell(row=current_row, column=col_remarks, value=rem)
 
-        existing_keys.add(key)
-        rows_written += 1
-        current_row += 1
+        # Match existing row by (date, shift, normalized POF)
+        existing_match = existing_by_pof.get((s_date, s_st, s_norm_pof))
+        if not existing_match and (s_date, s_st) in existing_by_date_shift:
+            cand_list = existing_by_date_shift[(s_date, s_st)]
+            if len(cand_list) == 1:
+                existing_match = cand_list[0]
+
+        if existing_match:
+            # Row already exists in Excel! Check if update is needed
+            ex_row = existing_match["row"]
+            ex_good = existing_match["good"]
+            ex_scrap = existing_match["scrap"]
+            ex_dt = existing_match["dt"]
+
+            # If already identical, skip
+            if ex_good == s_good and ex_scrap == s_scrap and abs(ex_dt - s_dt) < 0.01:
+                continue
+
+            # Update row cells in Excel
+            ws.cell(row=ex_row, column=col_date, value=s_date)
+            ws.cell(row=ex_row, column=col_machine, value="Continuous Line 1")
+            ws.cell(row=ex_row, column=col_pof, value=s_pof)
+            ws.cell(row=ex_row, column=col_product, value=display_prod)
+            ws.cell(row=ex_row, column=col_pid, value=pid)
+            ws.cell(row=ex_row, column=col_customer, value=s["customer_name"] or "Alpha Standard")
+
+            c_tot = ws.cell(row=ex_row, column=col_total, value=s_total)
+            c_tot.number_format = '#,##0'
+
+            c_good = ws.cell(row=ex_row, column=col_good, value=s_good)
+            c_good.number_format = '#,##0'
+
+            c_scrap = ws.cell(row=ex_row, column=col_scrap, value=s_scrap)
+            c_scrap.number_format = '#,##0'
+
+            c_rate = ws.cell(row=ex_row, column=col_scrap_pct, value=scrap_rate)
+            c_rate.number_format = '0.00%'
+
+            c_dt = ws.cell(row=ex_row, column=col_downtime, value=s_dt)
+            c_dt.number_format = '0.00'
+
+            ws.cell(row=ex_row, column=col_remarks, value=rem)
+
+            existing_match["good"] = s_good
+            existing_match["scrap"] = s_scrap
+            existing_match["dt"] = s_dt
+            rows_updated += 1
+        else:
+            # Append new row at the next available line
+            target_row = max(last_data_row + 1, header_row_idx + 1)
+            ws.cell(row=target_row, column=col_date, value=s_date)
+            ws.cell(row=target_row, column=col_machine, value="Continuous Line 1")
+            ws.cell(row=target_row, column=col_pof, value=s_pof)
+            ws.cell(row=target_row, column=col_product, value=display_prod)
+            ws.cell(row=target_row, column=col_pid, value=pid)
+            ws.cell(row=target_row, column=col_customer, value=s["customer_name"] or "Alpha Standard")
+
+            c_tot = ws.cell(row=target_row, column=col_total, value=s_total)
+            c_tot.number_format = '#,##0'
+
+            c_good = ws.cell(row=target_row, column=col_good, value=s_good)
+            c_good.number_format = '#,##0'
+
+            c_scrap = ws.cell(row=target_row, column=col_scrap, value=s_scrap)
+            c_scrap.number_format = '#,##0'
+
+            c_rate = ws.cell(row=target_row, column=col_scrap_pct, value=scrap_rate)
+            c_rate.number_format = '0.00%'
+
+            c_dt = ws.cell(row=target_row, column=col_downtime, value=s_dt)
+            c_dt.number_format = '0.00'
+
+            ws.cell(row=target_row, column=col_remarks, value=rem)
+
+            new_entry = {"row": target_row, "good": s_good, "scrap": s_scrap, "dt": s_dt, "norm_pof": s_norm_pof}
+            if s_norm_pof:
+                existing_by_pof[(s_date, s_st, s_norm_pof)] = new_entry
+            if (s_date, s_st) not in existing_by_date_shift:
+                existing_by_date_shift[(s_date, s_st)] = []
+            existing_by_date_shift[(s_date, s_st)].append(new_entry)
+
+            last_data_row = target_row
+            rows_written += 1
 
     wb.save(excel_path)
     wb.close()
@@ -1813,8 +1974,9 @@ def sync_db_to_excel(
         "file": excel_path,
         "filename": os.path.basename(excel_path),
         "rows_written": rows_written,
+        "rows_updated": rows_updated,
         "total_shifts_in_db": len(shifts),
-        "message": f"Successfully updated {os.path.basename(excel_path)} with {rows_written} shift record(s)."
+        "message": f"Successfully updated {os.path.basename(excel_path)} ({rows_written} added, {rows_updated} updated)."
     }
 
 if __name__ == "__main__":

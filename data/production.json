@@ -3,7 +3,8 @@
     "plant_name": "Alpha Aerosols",
     "location": "Kot Abdul Malik, Punjab, Pakistan",
     "as_of_date": "2026-09-14",
-    "generated_at": "2026-09-14T10:00:59.805557",
+    "active_workbook": "Aerosol_Sep26.xlsx",
+    "generated_at": "2026-09-14T10:14:14.740205",
     "version": "2.0.0",
     "sqlite_mode": "WAL"
   },

@@ -190,7 +190,8 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
         # Run sync passing test_json to guarantee isolation
         res1 = sync_excel_to_db(test_xlsx, test_db, test_json)
         self.assertEqual(res1["status"], "success")
-        self.assertEqual(res1["shifts_imported"], 2)
+        self.assertEqual(res1["shifts_imported"], 1)
+        self.assertEqual(res1["shifts_updated"], 1)
         self.assertEqual(res1["skipped_duplicates"], 0)
 
         # Verify test_json was created and master production.json was not mutated
@@ -203,11 +204,11 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
         # Verify DB records
         conn = get_connection(test_db)
         cur = conn.cursor()
-        cur.execute("SELECT s.*, o.pof_number, o.customer_name FROM shifts s JOIN orders o ON s.pof_id = o.id WHERE s.id > 1 ORDER BY s.id ASC;")
+        cur.execute("SELECT s.*, o.pof_number, o.customer_name FROM shifts s JOIN orders o ON s.pof_id = o.id ORDER BY s.id ASC;")
         shifts = [dict(r) for r in cur.fetchall()]
         conn.close()
 
-        # Check Row 3 parsed correctly with commas and date
+        # Check Row 3 updated inaugural shift 1 in-place with commas and date
         self.assertEqual(shifts[0]["good_cans"], 12000)
         self.assertEqual(shifts[0]["line_scrap"], 400)
         self.assertEqual(shifts[0]["shift_date"], "2026-09-12")
@@ -228,24 +229,58 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
         res2 = sync_excel_to_db(test_xlsx, test_db, test_json)
         self.assertEqual(res2["status"], "success")
         self.assertEqual(res2["shifts_imported"], 0)
+        self.assertEqual(res2["shifts_updated"], 0)
         self.assertEqual(res2["skipped_duplicates"], 2)
 
     def test_monthly_workbook_resolution(self):
         """Verify dynamic monthly Excel naming (Aerosol_MmmYY.xlsx) and fallback resolution."""
         self.assertEqual(get_monthly_workbook_name("2026-09-14"), "Aerosol_Sep26.xlsx")
         self.assertEqual(get_monthly_workbook_name("2026-10-01"), "Aerosol_Oct26.xlsx")
+        self.assertEqual(get_monthly_workbook_name("Oct26"), "Aerosol_Oct26.xlsx")
+        self.assertEqual(get_monthly_workbook_name("2026-11"), "Aerosol_Nov26.xlsx")
         self.assertEqual(get_monthly_workbook_name("2027-01-15"), "Aerosol_Jan27.xlsx")
 
         active_wb = get_active_aerosol_workbook(target_date="2026-09-14")
         self.assertTrue(os.path.exists(active_wb), f"Active workbook {active_wb} must exist")
         self.assertTrue(os.path.basename(active_wb).startswith("Aerosol_"))
 
+        # Test chronological sorting: Dec26 must be recognized as later than Jan26 (alphabetically 'Jan' > 'Dec')
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wb_jan = os.path.join(tmp_dir, "Aerosol_Jan26.xlsx")
+            wb_dec = os.path.join(tmp_dir, "Aerosol_Dec26.xlsx")
+            open(wb_jan, "w").close()
+            open(wb_dec, "w").close()
+            # Since target_date=None looks for current month (Sep26) which does not exist in tmp_dir,
+            # it falls back to candidates and must sort chronologically: Dec26 > Jan26!
+            latest = get_active_aerosol_workbook(base_dir=tmp_dir, target_date=None)
+            self.assertEqual(os.path.basename(latest), "Aerosol_Dec26.xlsx")
+
+            # Test create_if_missing=True for target month creates target even if older exists
+            wb_target = get_active_aerosol_workbook(base_dir=tmp_dir, target_date="2027-02-01", create_if_missing=True)
+            self.assertEqual(os.path.basename(wb_target), "Aerosol_Feb27.xlsx")
+            self.assertTrue(os.path.exists(wb_target))
+
+    def test_get_connection_relative_path(self):
+        """Verify get_connection does not crash with WinError 3 when db_path has no directory prefix."""
+        rel_db = "test_rel_tmp.db"
+        try:
+            conn = get_connection(rel_db)
+            self.assertIsNotNone(conn)
+            conn.close()
+        finally:
+            if os.path.exists(rel_db):
+                try:
+                    os.remove(rel_db)
+                except Exception:
+                    pass
+
     def test_bidirectional_excel_sync(self):
         """
         Verify bidirectional synchronization:
         Option A: Web/SQLite -> Monthly Excel workbook (sync_db_to_excel)
         Option B: Monthly Excel -> Web/SQLite (sync_excel_to_db)
-        Ensures idempotence, formatting preservation, and raw material deduction.
+        Ensures idempotence, row updates vs append, POF normalization, and raw material deduction.
         """
         import openpyxl
         import shutil
@@ -287,7 +322,6 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
             # Inspect Excel file directly to verify contents and formatting
             wb = openpyxl.load_workbook(test_xlsx, data_only=True)
             ws = wb["Data_Entry"]
-            # Row 4 should contain our newly added 10k shift (Row 3 has the inaugural shift)
             self.assertEqual(str(ws.cell(row=4, column=1).value)[:10], "2026-09-14")
             self.assertEqual(ws.cell(row=4, column=2).value, "Continuous Line 1")
             self.assertEqual(ws.cell(row=4, column=3).value, "POF-2026-001")
@@ -299,11 +333,31 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
             self.assertIn("Tariq Mahmood", str(ws.cell(row=4, column=12).value))
             wb.close()
 
-            # 3. Idempotence test for Option A (pushing again without new shifts writes 0)
+            # 3. Idempotence test for Option A (pushing again without new shifts writes 0 and updates 0)
             res_to_again = sync_db_to_excel(excel_path=test_xlsx, db_path=test_db, month_str="Sep26")
             self.assertEqual(res_to_again["rows_written"], 0)
+            self.assertEqual(res_to_again["rows_updated"], 0)
 
-            # 4. Option B: Sync from Excel back to DB -> should recognize row 4 as duplicate (row 3 is 0/0 inaugural)
+            # 3b. Option A: Update existing entry data from Web -> Excel!
+            # Operator logged 15,000 for today (updated run)
+            conn_u = get_connection(test_db)
+            conn_u.execute("UPDATE shifts SET good_cans = 15000, line_scrap = 500 WHERE id = ?;", (shift_id,))
+            conn_u.commit()
+            conn_u.close()
+
+            res_to_update = sync_db_to_excel(excel_path=test_xlsx, db_path=test_db, month_str="Sep26")
+            self.assertEqual(res_to_update["rows_updated"], 1)
+            self.assertEqual(res_to_update["rows_written"], 0)
+
+            # Verify the row in Excel was updated in-place (row 4 now shows 15,000)
+            wb_up = openpyxl.load_workbook(test_xlsx, data_only=True)
+            ws_up = wb_up["Data_Entry"]
+            self.assertEqual(ws_up.cell(row=4, column=8).value, 15000)
+            self.assertEqual(ws_up.cell(row=4, column=9).value, 500)
+            self.assertEqual(ws_up.cell(row=4, column=7).value, 15500)
+            wb_up.close()
+
+            # 4. Option B: Sync from Excel back to DB -> recognizes row 4 as duplicate
             res_from = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
             self.assertEqual(res_from["status"], "success")
             self.assertEqual(res_from["shifts_imported"], 0)
@@ -341,7 +395,51 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
             self.assertIsNotNone(row)
             self.assertEqual(row["shift_type"], "Night")
             self.assertEqual(row["supervisor"], "M. Aslam")
+
+            # 7. Option B Update: Operator fixes quantity in Excel on row 5 from 12,000 to 14,000
+            wb3 = openpyxl.load_workbook(test_xlsx)
+            ws3 = wb3["Data_Entry"]
+            ws3.cell(row=5, column=8, value=14000)
+            ws3.cell(row=5, column=7, value=14500)
+            wb3.save(test_xlsx)
+            wb3.close()
+
+            res_from_update = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
+            self.assertEqual(res_from_update["status"], "success")
+            self.assertEqual(res_from_update["shifts_updated"], 1)
+            self.assertEqual(res_from_update["shifts_imported"], 0)
+
+            # Verify shift in SQLite was updated in place without duplicate row!
+            cur.execute("SELECT good_cans FROM shifts WHERE shift_date = '2026-09-14' AND shift_type = 'Night';")
+            updated_shift_row = cur.fetchone()
+            self.assertEqual(updated_shift_row["good_cans"], 14000)
+
+            # Check total shifts count in DB is exactly 3 (1 inaugural + 1 Day + 1 Night)
+            cur.execute("SELECT COUNT(*) FROM shifts;")
+            self.assertEqual(cur.fetchone()[0], 3)
             conn.close()
+
+            # 8. POF Normalization test: Excel with POF '81' matches 'POF-2026-081' without duplicating
+            wb_pof = openpyxl.load_workbook(test_xlsx)
+            ws_pof = wb_pof["Data_Entry"]
+            ws_pof.cell(row=6, column=1, value="2026-09-15")
+            ws_pof.cell(row=6, column=2, value="Continuous Line 1")
+            ws_pof.cell(row=6, column=3, value="81")  # Operator wrote '81' instead of 'POF-2026-081'
+            ws_pof.cell(row=6, column=8, value=8000)
+            ws_pof.cell(row=6, column=9, value=300)
+            ws_pof.cell(row=6, column=7, value=8300)
+            ws_pof.cell(row=6, column=12, value="Day Shift - Tariq Mahmood")
+            wb_pof.save(test_xlsx)
+            wb_pof.close()
+
+            # Option B imports it into DB as POF-81 or order 81
+            res_pof_b = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
+            self.assertEqual(res_pof_b["shifts_imported"], 1)
+
+            # Option A should recognize that row 6 already has this shift and NOT write a duplicate
+            res_pof_a = sync_db_to_excel(excel_path=test_xlsx, db_path=test_db, month_str="Sep26")
+            self.assertEqual(res_pof_a["rows_written"], 0)
+            self.assertEqual(res_pof_a["rows_updated"], 0)
 
         finally:
             for ext in ['', '-wal', '-shm']:

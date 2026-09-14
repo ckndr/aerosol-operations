@@ -349,11 +349,33 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Dynamic Monthly Workbook & Bidirectional Excel Sync
 function getActiveWorkbookName(targetDate = null) {
-  const d = targetDate ? new Date(targetDate) : new Date();
+  if (!targetDate && AppState.data?.meta?.active_workbook) {
+    return AppState.data.meta.active_workbook;
+  }
+  let d;
+  if (targetDate) {
+    d = new Date(targetDate);
+  } else if (AppState.data?.meta?.as_of_date) {
+    const parts = AppState.data.meta.as_of_date.split('-');
+    d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2] || 1));
+  } else {
+    d = new Date();
+  }
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const mmm = months[d.getMonth()];
   const yy = String(d.getFullYear()).slice(-2);
   return `Aerosol_${mmm}${yy}.xlsx`;
+}
+
+function triggerFileDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function exportShiftsClientCsv(shifts, filename) {
@@ -385,14 +407,7 @@ function exportShiftsClientCsv(shifts, filename) {
 
   const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename.replace(/\.xlsx$/i, '.csv');
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  triggerFileDownload(blob, filename.replace(/\.xlsx$/i, '.csv'));
 }
 
 async function syncToExcel() {
@@ -409,16 +424,21 @@ async function syncToExcel() {
     if (res.ok) {
       const data = await res.json();
       const fn = data.filename || wbName;
-      const count = data.rows_written !== undefined ? data.rows_written : 0;
-      showToast(`Excel Updated: ${count} shift(s) saved to ${fn}! <a href="/api/download/workbook/${fn}" style="color: #fff; text-decoration: underline; margin-left: 6px; font-weight: 600;" download>Download .xlsx</a>`, 'emerald', 6000);
+      const written = data.rows_written !== undefined ? data.rows_written : 0;
+      const updated = data.rows_updated !== undefined ? data.rows_updated : 0;
+      let msg = `Excel Updated: ${fn} (${written} added, ${updated} updated)!`;
+      if (written === 0 && updated === 0) {
+        msg = `Excel Up-to-Date: All shifts already recorded in ${fn}.`;
+      }
+      showToast(`${msg} <a href="/api/download/workbook/${fn}" style="color: #fff; text-decoration: underline; margin-left: 6px; font-weight: 600;" download>Download .xlsx</a>`, 'emerald', 6000);
       return data;
     } else {
       throw new Error(`Server returned ${res.status}`);
     }
   } catch (err) {
-    console.warn('Backend sync/to-excel unavailable, generating browser CSV export fallback:', err);
-    exportShiftsClientCsv(AppState.data?.shifts || [], wbName);
-    showToast(`Browser export: Shifts saved to ${wbName.replace('.xlsx', '.csv')}!`, 'emerald', 5000);
+    console.warn('Backend sync/to-excel unavailable, generating browser export fallback:', err);
+    await downloadActiveWorkbook();
+    showToast(`Browser mode: Shifts exported for ${wbName}!`, 'emerald', 5000);
   }
 }
 
@@ -437,7 +457,8 @@ async function syncFromExcel() {
       const data = await res.json();
       const fn = data.filename || wbName;
       const imported = data.shifts_imported || 0;
-      showToast(`Imported ${imported} shift(s) from ${fn} into database!`, 'emerald', 5000);
+      const updated = data.shifts_updated || 0;
+      showToast(`Excel Sync: ${imported} imported, ${updated} updated from ${fn}!`, 'emerald', 5000);
       await fetchProductionData();
       return data;
     } else {
@@ -456,20 +477,39 @@ async function downloadActiveWorkbook() {
     const res = await fetch(`/api/download/workbook/${wbName}`);
     if (res.ok) {
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = wbName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      triggerFileDownload(blob, wbName);
       showToast(`Downloaded ${wbName}`, 'emerald');
       return;
     }
   } catch (e) {
-    console.warn('API download not reachable, falling back to CSV export:', e);
+    console.warn('API download not reachable, trying static workbook file:', e);
   }
+
+  // Static host fallback (e.g. GitHub Pages): fetch committed workbook directly
+  try {
+    const staticRes = await fetch(`./${wbName}`);
+    if (staticRes.ok) {
+      const blob = await staticRes.blob();
+      triggerFileDownload(blob, wbName);
+      showToast(`Downloaded ${wbName} from repository`, 'emerald');
+      return;
+    }
+  } catch (e2) {
+    console.warn('Static workbook fetch failed, trying template:', e2);
+  }
+
+  try {
+    const tmplRes = await fetch('./Aerosol_Production_Entry.xlsx');
+    if (tmplRes.ok) {
+      const blob = await tmplRes.blob();
+      triggerFileDownload(blob, 'Aerosol_Production_Entry.xlsx');
+      showToast('Downloaded Aerosol_Production_Entry.xlsx', 'emerald');
+      return;
+    }
+  } catch (e3) {
+    console.warn('Template fetch failed:', e3);
+  }
+
   exportShiftsClientCsv(AppState.data?.shifts || [], wbName);
   showToast(`Exported shifts to ${wbName.replace('.xlsx', '.csv')}`, 'emerald');
 }

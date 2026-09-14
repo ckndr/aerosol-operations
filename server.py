@@ -55,7 +55,10 @@ async def root_static_file(request):
             ".json": "application/json",
             ".js": "application/javascript",
             ".css": "text/css",
-            ".html": "text/html"
+            ".html": "text/html",
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".pdf": "application/pdf"
         }
         ext = os.path.splitext(safe_name)[1].lower()
         return FileResponse(path, media_type=media_types.get(ext, "application/octet-stream"))
@@ -186,7 +189,7 @@ async def api_sync_from_excel(request):
         if not excel_file and "file" in request.query_params:
             excel_file = request.query_params["file"]
 
-        result = engine.sync_excel_to_db(excel_path=excel_file)
+        result = engine.sync_excel_to_db(excel_path=excel_file, db_path=engine.DB_PATH, json_path=engine.JSON_PATH)
         return JSONResponse({"success": True, **result})
     except FileNotFoundError as fnf:
         return JSONResponse({"success": False, "error": str(fnf)}, status_code=404)
@@ -209,7 +212,7 @@ async def api_sync_to_excel(request):
         if not month_str and "month" in request.query_params:
             month_str = request.query_params["month"]
 
-        result = engine.sync_db_to_excel(excel_path=excel_file, month_str=month_str)
+        result = engine.sync_db_to_excel(excel_path=excel_file, db_path=engine.DB_PATH, month_str=month_str)
         filename = result.get("filename") or os.path.basename(result.get("file", "Aerosol_Sep26.xlsx"))
         return JSONResponse({
             "success": True,

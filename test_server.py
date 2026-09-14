@@ -17,6 +17,10 @@ class TestServerEndpoints(unittest.TestCase):
         cls.orig_json_path = engine.JSON_PATH
         cls.test_db_path = os.path.join(os.path.dirname(__file__), 'data', 'test_server_aerosol.db')
         cls.test_json_path = os.path.join(os.path.dirname(__file__), 'data', 'test_server_production.json')
+        cls.test_xlsx = os.path.join(os.path.dirname(__file__), 'data', 'test_server_sync.xlsx')
+        import shutil
+        shutil.copyfile(os.path.join(os.path.dirname(__file__), 'Aerosol_Production_Entry.xlsx'), cls.test_xlsx)
+
         engine.DB_PATH = cls.test_db_path
         engine.JSON_PATH = cls.test_json_path
         engine.seed_master_data(cls.test_db_path, force_reseed=True, demo_data=True)
@@ -37,6 +41,11 @@ class TestServerEndpoints(unittest.TestCase):
         if os.path.exists(cls.test_json_path):
             try:
                 os.remove(cls.test_json_path)
+            except Exception:
+                pass
+        if os.path.exists(cls.test_xlsx):
+            try:
+                os.remove(cls.test_xlsx)
             except Exception:
                 pass
         jc = os.path.join(os.path.dirname(__file__), 'data', 'Aerosol_Job_Card_POF_1.xlsx')
@@ -100,31 +109,31 @@ class TestServerEndpoints(unittest.TestCase):
 
     def test_sync_to_excel_endpoint(self):
         """Verify Option A REST endpoint /api/sync/to-excel exports shifts to monthly workbook."""
-        # Test POST
-        res_post = self.client.post("/api/sync/to-excel", json={})
+        # Test POST with isolated test workbook
+        res_post = self.client.post("/api/sync/to-excel", json={"file": self.test_xlsx})
         self.assertEqual(res_post.status_code, 200)
         data_post = res_post.json()
         self.assertTrue(data_post["success"])
-        self.assertIn("Aerosol_", data_post["filename"])
+        self.assertIn("test_server_sync.xlsx", data_post["filename"])
         self.assertIn("/api/download/workbook/", data_post["download_url"])
 
-        # Test GET
-        res_get = self.client.get("/api/sync/to-excel")
+        # Test GET with isolated test workbook
+        res_get = self.client.get(f"/api/sync/to-excel?file={self.test_xlsx}")
         self.assertEqual(res_get.status_code, 200)
         self.assertTrue(res_get.json()["success"])
 
     def test_sync_from_excel_endpoint(self):
         """Verify Option B REST endpoint /api/sync/from-excel imports shifts from monthly workbook."""
-        # Test POST
-        res_post = self.client.post("/api/sync/from-excel", json={})
+        # Test POST with isolated test workbook
+        res_post = self.client.post("/api/sync/from-excel", json={"file": self.test_xlsx})
         self.assertEqual(res_post.status_code, 200)
         data_post = res_post.json()
         self.assertTrue(data_post["success"])
-        self.assertIn("Aerosol_", data_post["filename"])
+        self.assertIn("test_server_sync.xlsx", data_post["filename"])
         self.assertIn("shifts_imported", data_post)
 
-        # Test GET
-        res_get = self.client.get("/api/sync/from-excel")
+        # Test GET with isolated test workbook
+        res_get = self.client.get(f"/api/sync/from-excel?file={self.test_xlsx}")
         self.assertEqual(res_get.status_code, 200)
         self.assertTrue(res_get.json()["success"])
 

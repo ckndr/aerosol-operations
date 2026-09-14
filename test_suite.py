@@ -20,6 +20,9 @@ class TestAlphaAerosolsFullSuite(unittest.TestCase):
         cls.orig_json_path = engine.JSON_PATH
         cls.test_db_path = os.path.join(os.path.dirname(__file__), 'data', 'test_aerosol.db')
         cls.test_json_path = os.path.join(os.path.dirname(__file__), 'data', 'test_production.json')
+        cls.test_xlsx = os.path.join(os.path.dirname(__file__), 'data', 'test_suite_sync.xlsx')
+        import shutil
+        shutil.copyfile(os.path.join(os.path.dirname(__file__), 'Aerosol_Production_Entry.xlsx'), cls.test_xlsx)
         
         # Override paths during tests so master DB is never polluted
         engine.DB_PATH = cls.test_db_path
@@ -43,6 +46,11 @@ class TestAlphaAerosolsFullSuite(unittest.TestCase):
         if os.path.exists(cls.test_json_path):
             try:
                 os.remove(cls.test_json_path)
+            except Exception:
+                pass
+        if os.path.exists(cls.test_xlsx):
+            try:
+                os.remove(cls.test_xlsx)
             except Exception:
                 pass
         # Clean up exported job card xlsx files from test run
@@ -344,16 +352,16 @@ class TestAlphaAerosolsFullSuite(unittest.TestCase):
 
     def test_11_bidirectional_excel_sync_and_api(self):
         """Verify Option A and Option B bidirectional Excel sync REST endpoints end-to-end."""
-        # 1. Option A: POST /api/sync/to-excel
-        res_to = self.client.post("/api/sync/to-excel", json={})
+        # 1. Option A: POST /api/sync/to-excel with isolated test workbook
+        res_to = self.client.post("/api/sync/to-excel", json={"file": self.test_xlsx})
         self.assertEqual(res_to.status_code, 200)
         data_to = res_to.json()
         self.assertTrue(data_to["success"])
-        self.assertIn("Aerosol_", data_to["filename"])
+        self.assertIn("test_suite_sync.xlsx", data_to["filename"])
         self.assertIn("/api/download/workbook/", data_to["download_url"])
 
-        # 2. Option B: POST /api/sync/from-excel
-        res_from = self.client.post("/api/sync/from-excel", json={})
+        # 2. Option B: POST /api/sync/from-excel with isolated test workbook
+        res_from = self.client.post("/api/sync/from-excel", json={"file": self.test_xlsx})
         self.assertEqual(res_from.status_code, 200)
         data_from = res_from.json()
         self.assertTrue(data_from["success"])
