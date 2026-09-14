@@ -437,8 +437,8 @@ async function syncToExcel() {
     }
   } catch (err) {
     console.warn('Backend sync/to-excel unavailable, generating browser export fallback:', err);
-    await downloadActiveWorkbook();
-    showToast(`Browser mode: Shifts exported for ${wbName}!`, 'emerald', 5000);
+    exportShiftsClientCsv(AppState.data?.shifts || [], wbName);
+    showToast(`Browser mode: Shifts exported for ${wbName.replace(/\.xlsx$/i, '.csv')}!`, 'emerald', 5000);
   }
 }
 

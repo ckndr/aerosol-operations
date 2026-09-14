@@ -235,14 +235,38 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
     def test_monthly_workbook_resolution(self):
         """Verify dynamic monthly Excel naming (Aerosol_MmmYY.xlsx) and fallback resolution."""
         self.assertEqual(get_monthly_workbook_name("2026-09-14"), "Aerosol_Sep26.xlsx")
-        self.assertEqual(get_monthly_workbook_name("2026-10-01"), "Aerosol_Oct26.xlsx")
-        self.assertEqual(get_monthly_workbook_name("Oct26"), "Aerosol_Oct26.xlsx")
+        self.assertEqual(get_monthly_workbook_name("October 2026"), "Aerosol_Oct26.xlsx")
+        self.assertEqual(get_monthly_workbook_name("Oct 2026"), "Aerosol_Oct26.xlsx")
+        self.assertEqual(get_monthly_workbook_name("September 2026"), "Aerosol_Sep26.xlsx")
         self.assertEqual(get_monthly_workbook_name("2026-11"), "Aerosol_Nov26.xlsx")
         self.assertEqual(get_monthly_workbook_name("2027-01-15"), "Aerosol_Jan27.xlsx")
 
         active_wb = get_active_aerosol_workbook(target_date="2026-09-14")
         self.assertTrue(os.path.exists(active_wb), f"Active workbook {active_wb} must exist")
         self.assertTrue(os.path.basename(active_wb).startswith("Aerosol_"))
+
+    def test_clean_number_and_date_parsing(self):
+        """Verify robust parsing of numbers (with k/m units) and dates (serials, timestamps)."""
+        from engine import parse_clean_number, parse_clean_date
+        # Number parsing
+        self.assertEqual(parse_clean_number(10000), 10000.0)
+        self.assertEqual(parse_clean_number("10,000"), 10000.0)
+        self.assertEqual(parse_clean_number("10k"), 10000.0)
+        self.assertEqual(parse_clean_number("15.5k"), 15500.0)
+        self.assertEqual(parse_clean_number("1.2m"), 1200000.0)
+        self.assertEqual(parse_clean_number("10000 pcs"), 10000.0)
+        self.assertIsNone(parse_clean_number("-"))
+        self.assertIsNone(parse_clean_number("#VALUE!"))
+
+        # Date parsing
+        self.assertEqual(parse_clean_date("2026-09-12"), "2026-09-12")
+        self.assertEqual(parse_clean_date("2026-09-12 00:00:00"), "2026-09-12")
+        self.assertEqual(parse_clean_date("2026-09-12T08:00:00"), "2026-09-12")
+        self.assertEqual(parse_clean_date("12/09/2026"), "2026-09-12")
+        self.assertEqual(parse_clean_date("12-Sep-2026"), "2026-09-12")
+        # Excel date serial (46277 = 2026-09-12)
+        self.assertEqual(parse_clean_date(46277), "2026-09-12")
+        self.assertEqual(parse_clean_date(46277.0), "2026-09-12")
 
         # Test chronological sorting: Dec26 must be recognized as later than Jan26 (alphabetically 'Jan' > 'Dec')
         import tempfile
@@ -357,11 +381,11 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
             self.assertEqual(ws_up.cell(row=4, column=7).value, 15500)
             wb_up.close()
 
-            # 4. Option B: Sync from Excel back to DB -> recognizes row 4 as duplicate
+            # 4. Option B: Sync from Excel back to DB -> recognizes both row 3 (inaugural 0-can shift) and row 4 as duplicates
             res_from = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
             self.assertEqual(res_from["status"], "success")
             self.assertEqual(res_from["shifts_imported"], 0)
-            self.assertEqual(res_from["skipped_duplicates"], 1)
+            self.assertEqual(res_from["skipped_duplicates"], 2)
 
             # 5. Add a new manual shift in Excel on row 5 (Option B)
             wb2 = openpyxl.load_workbook(test_xlsx)
@@ -385,7 +409,7 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
             res_from_new = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
             self.assertEqual(res_from_new["status"], "success")
             self.assertEqual(res_from_new["shifts_imported"], 1)
-            self.assertEqual(res_from_new["skipped_duplicates"], 1)
+            self.assertEqual(res_from_new["skipped_duplicates"], 2)
 
             # Verify the newly imported shift exists in SQLite
             conn = get_connection(test_db)
@@ -440,6 +464,62 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
             res_pof_a = sync_db_to_excel(excel_path=test_xlsx, db_path=test_db, month_str="Sep26")
             self.assertEqual(res_pof_a["rows_written"], 0)
             self.assertEqual(res_pof_a["rows_updated"], 0)
+
+            # 9. Zero-Production Breakdown Shift: Line stopped due to mechanical repair (0 good, 0 scrap, 4.5h downtime)
+            wb_breakdown = openpyxl.load_workbook(test_xlsx)
+            ws_bd = wb_breakdown["Data_Entry"]
+            ws_bd.cell(row=7, column=1, value="2026-09-16")
+            ws_bd.cell(row=7, column=2, value="Continuous Line 1")
+            ws_bd.cell(row=7, column=3, value="POF-2026-081")
+            ws_bd.cell(row=7, column=7, value=0)
+            ws_bd.cell(row=7, column=8, value=0)
+            ws_bd.cell(row=7, column=9, value=0)
+            ws_bd.cell(row=7, column=11, value=4.5)  # 4.5 hours downtime
+            ws_bd.cell(row=7, column=12, value="Day Shift - Tariq Mahmood - Curing oven repair")
+            wb_breakdown.save(test_xlsx)
+            wb_breakdown.close()
+
+            # Option B must NOT skip this breakdown shift as empty!
+            res_bd = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
+            self.assertEqual(res_bd["shifts_imported"], 1)
+
+            # Verify in SQLite
+            conn = get_connection(test_db)
+            cur = conn.cursor()
+            cur.execute("SELECT good_cans, line_scrap, downtime_hours, downtime_reason FROM shifts WHERE shift_date = '2026-09-16';")
+            bd_row = cur.fetchone()
+            self.assertIsNotNone(bd_row)
+            self.assertEqual(bd_row["good_cans"], 0)
+            self.assertEqual(bd_row["downtime_hours"], 4.5)
+            self.assertIn("Curing oven repair", bd_row["downtime_reason"])
+            conn.close()
+
+            # 10. Downtime in minutes conversion & Word-boundary check:
+            # Add column 'DownTime (mins)' and 'Can Width' (ensure 'width' is NOT treated as downtime!)
+            wb_dt = openpyxl.load_workbook(test_xlsx)
+            ws_dt = wb_dt["Data_Entry"]
+            ws_dt.cell(row=2, column=13, value="DownTime (mins)")
+            ws_dt.cell(row=2, column=14, value="Can Width (mm)")
+            ws_dt.cell(row=8, column=1, value="2026-09-17")
+            ws_dt.cell(row=8, column=3, value="POF-2026-081")
+            ws_dt.cell(row=8, column=8, value=5000)
+            ws_dt.cell(row=8, column=9, value=100)
+            ws_dt.cell(row=8, column=13, value=15)   # 15 minutes -> must convert to 0.25 hours!
+            ws_dt.cell(row=8, column=14, value=45.0) # 45mm width -> must NOT be treated as downtime!
+            ws_dt.cell(row=8, column=12, value="Night Shift - M. Aslam - Minor wiper adjustment")
+            wb_dt.save(test_xlsx)
+            wb_dt.close()
+
+            res_dt = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
+            self.assertEqual(res_dt["shifts_imported"], 1)
+
+            conn = get_connection(test_db)
+            cur = conn.cursor()
+            cur.execute("SELECT downtime_hours FROM shifts WHERE shift_date = '2026-09-17';")
+            dt_shift = cur.fetchone()
+            self.assertIsNotNone(dt_shift)
+            self.assertEqual(dt_shift["downtime_hours"], 0.25)
+            conn.close()
 
         finally:
             for ext in ['', '-wal', '-shm']:

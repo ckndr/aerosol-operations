@@ -815,12 +815,21 @@ def export_production_json(db_path: Optional[str] = None, json_path: Optional[st
     total_fg_buffer_cans = sum(max(0, o["produced_good"] - o["dispatched_total"]) for o in orders)
     total_fg_buffer_pallets = round(total_fg_buffer_cans / 3000.0, 1) if total_fg_buffer_cans > 0 else 0.0
 
+    # Resolve active monthly workbook
+    base_dir = os.path.dirname(os.path.abspath(db_path)) if db_path else os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")):
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        if os.path.exists(os.path.join(project_root, "Aerosol_Production_Entry.xlsx")):
+            base_dir = project_root
+    resolved_wb_path = get_active_aerosol_workbook(base_dir=base_dir, target_date=ref_date)
+    active_wb_name = os.path.basename(resolved_wb_path)
+
     payload = {
         "meta": {
             "plant_name": "Alpha Aerosols",
             "location": "Kot Abdul Malik, Punjab, Pakistan",
             "as_of_date": ref_date_str,
-            "active_workbook": get_monthly_workbook_name(ref_date),
+            "active_workbook": active_wb_name,
             "generated_at": datetime.now().isoformat(),
             "version": "2.0.0",
             "sqlite_mode": "WAL"
@@ -1158,14 +1167,14 @@ def export_job_card_excel(pof_id: int, output_path: str, db_path: Optional[str] 
     return output_path
 
 def parse_clean_number(val: Any) -> Optional[float]:
-    """Parses numeric string or float safely, handling commas, percentages, and Excel error strings."""
+    """Parses numeric string or float safely, handling commas, percentages, k/m multipliers, and Excel error strings."""
     if val is None:
         return None
     if isinstance(val, (int, float)):
         if math.isnan(val):
             return None
         return float(val)
-    val_str = str(val).strip()
+    val_str = str(val).strip().strip('"\'')
     if not val_str or val_str.lower() in ("none", "null", "nan", "-", "", "#value!", "#ref!", "#n/a"):
         return None
     cleaned = val_str.replace(",", "").replace(" ", "").replace("pcs", "").strip()
@@ -1174,28 +1183,57 @@ def parse_clean_number(val: Any) -> Optional[float]:
             return float(cleaned[:-1].strip())
         except ValueError:
             return None
+    if cleaned.lower().endswith("k"):
+        try:
+            return float(cleaned[:-1].strip()) * 1000.0
+        except ValueError:
+            return None
+    if cleaned.lower().endswith("m"):
+        try:
+            return float(cleaned[:-1].strip()) * 1000000.0
+        except ValueError:
+            return None
     try:
         return float(cleaned)
     except ValueError:
         return None
 
 def parse_clean_date(val: Any) -> Optional[str]:
-    """Parses various date formats and Excel date objects into standard ISO-8601 YYYY-MM-DD string."""
+    """Parses various date formats, timestamps, Excel date serials, and date objects into standard ISO-8601 YYYY-MM-DD string."""
     if val is None:
         return None
     if isinstance(val, (datetime, date)):
         return val.strftime("%Y-%m-%d")
-    val_str = str(val).strip()
+    if isinstance(val, (int, float)):
+        # Excel date serial (days since 1899-12-30)
+        if 20000 <= val <= 80000:
+            try:
+                dt_serial = date(1899, 12, 30) + timedelta(days=int(val))
+                return dt_serial.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        return None
+    val_str = str(val).strip().strip('"\'')
     if not val_str:
         return None
+    # Fast match ISO YYYY-MM-DD
+    m_iso = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", val_str)
+    if m_iso:
+        try:
+            return date(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
     for fmt in (
-        "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d",
+        "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
+        "%d/%m/%Y", "%d/%m/%Y %H:%M:%S",
+        "%d-%m-%Y", "%d-%m-%Y %H:%M:%S",
+        "%Y/%m/%d", "%Y/%m/%d %H:%M:%S",
         "%d-%b-%Y", "%d-%B-%Y", "%d/%b/%Y", "%d/%B/%Y",
         "%d.%m.%Y", "%d.%m.%y", "%d/%m/%y", "%d-%m-%y",
         "%b %d, %Y", "%B %d, %Y", "%Y.%m.%d"
     ):
         try:
-            return datetime.strptime(val_str, fmt).strftime("%Y-%m-%d")
+            return datetime.strptime(val_str[:19], fmt).strftime("%Y-%m-%d")
         except ValueError:
             pass
     return None
@@ -1232,21 +1270,34 @@ def get_monthly_workbook_name(target_date: Optional[Union[str, date, datetime]] 
     elif isinstance(target_date, date):
         dt = datetime.combine(target_date, datetime.min.time())
     elif isinstance(target_date, str):
-        target_str = target_date.strip()
+        target_str = target_date.strip().strip('"\'')
         dt = None
-        for fmt in ("%Y-%m-%d", "%Y-%m", "%b%y", "%b-%y", "%B%Y", "%d-%b-%Y", "%d/%m/%Y"):
+        for fmt in (
+            "%B %Y", "%b %Y", "%B %y", "%b %y", "%B%Y", "%b%y", "%b-%y", "%B-%y", "%B-%Y",
+            "%Y-%m-%d", "%Y-%m", "%d-%b-%Y", "%d/%m/%Y"
+        ):
             try:
-                dt = datetime.strptime(target_str[:10] if len(target_str) >= 10 else target_str, fmt)
+                dt = datetime.strptime(target_str, fmt)
                 break
             except Exception:
-                pass
+                if len(target_str) >= 10:
+                    try:
+                        dt = datetime.strptime(target_str[:10], fmt)
+                        break
+                    except Exception:
+                        pass
         if dt is None:
-            m = re.search(r"([A-Za-z]{3}\d{2})", target_str)
+            m = re.search(r"([A-Za-z]{3,9})[\s\-_]*(\d{2,4})", target_str)
             if m:
-                try:
-                    dt = datetime.strptime(m.group(1), "%b%y")
-                except Exception:
-                    pass
+                for m_fmt in ("%B", "%b"):
+                    for y_fmt in ("%Y", "%y"):
+                        try:
+                            dt = datetime.strptime(f"{m.group(1)} {m.group(2)}", f"{m_fmt} {y_fmt}")
+                            break
+                        except Exception:
+                            pass
+                    if dt:
+                        break
         if dt is None:
             dt = datetime.now()
     else:
@@ -1431,17 +1482,19 @@ def sync_excel_to_db(
         raw_supervisor = get_col_val(r, ["supervisor", "lead", "operator"])
         raw_shift = get_col_val(r, ["shift"])
 
-        # Downtime parsing: check all DT columns (e.g. Mechanical DT, Electrical DT, DownTime)
+        # Downtime parsing: match downtime / dt columns with word boundaries (avoid false positives like 'width')
         total_dt = 0.0
         dt_subtypes = []
         for h_text, col_idx in headers.items():
-            if any(k in h_text for k in ["down", "dt"]) and not any(ek in h_text for ek in ["reason", "remark", "cause"]):
+            if re.search(r"\b(dt|down\s*time)\b", h_text, re.IGNORECASE) and not re.search(r"\b(reason|remark|cause|notes?)\b", h_text, re.IGNORECASE):
                 cell_v = ws.cell(row=r, column=col_idx).value
                 parsed_v = parse_clean_number(cell_v)
                 if parsed_v and parsed_v > 0:
-                    total_dt += parsed_v
-                    col_title = h_text.replace("dt", "DT").title()
-                    dt_subtypes.append(f"{col_title}: {parsed_v}")
+                    is_mins = bool(re.search(r"\b(min|mins|minutes?)\b", h_text, re.IGNORECASE))
+                    dt_val_hrs = round(parsed_v / 60.0, 2) if (is_mins or parsed_v > 12.0) else round(parsed_v, 2)
+                    total_dt += dt_val_hrs
+                    col_title = re.sub(r"\bdt\b", "DT", h_text, flags=re.IGNORECASE).title()
+                    dt_subtypes.append(f"{col_title}: {dt_val_hrs}h")
 
         # Check if row is empty or template row
         if raw_date is None and raw_good is None and raw_total is None and raw_pof is None:
@@ -1485,7 +1538,10 @@ def sync_excel_to_db(
             good_cans = 0
             line_scrap = 0
 
-        if good_cans == 0 and line_scrap == 0:
+        pof_str = str(raw_pof).strip() if raw_pof is not None else ""
+
+        # Only skip if 0 production AND no downtime AND no POF was specified
+        if good_cans == 0 and line_scrap == 0 and total_dt <= 0 and not pof_str:
             skipped_empty += 1
             continue
 
@@ -1496,25 +1552,19 @@ def sync_excel_to_db(
         else:
             inferred_size = "45x160mm"
 
-        # Resolve POF and Order
+        # Resolve POF and Order using canonical normalization
         pof_id = None
         product_size = None
-        pof_str = str(raw_pof).strip() if raw_pof is not None else ""
+        norm_pof_key = normalize_pof(pof_str)
 
-        if pof_str:
-            cand_pofs = [pof_str]
-            if not pof_str.upper().startswith("POF-"):
-                cand_pofs.append(f"POF-{pof_str}")
-                if pof_str.isdigit():
-                    cand_pofs.append(f"POF-2026-{int(pof_str):03d}")
-
-            placeholders = ",".join(["?"] * len(cand_pofs))
-            cur.execute(f"SELECT id, product_size FROM orders WHERE pof_number IN ({placeholders}) OR id = ?;",
-                        (*cand_pofs, pof_str))
-            matched_order = cur.fetchone()
-            if matched_order:
-                pof_id = matched_order["id"]
-                product_size = matched_order["product_size"]
+        if pof_str or norm_pof_key:
+            cur.execute("SELECT id, pof_number, customer_name, product_size FROM orders ORDER BY id ASC;")
+            all_orders = [dict(row) for row in cur.fetchall()]
+            for ord_row in all_orders:
+                if (norm_pof_key and normalize_pof(ord_row["pof_number"]) == norm_pof_key) or str(ord_row["id"]) == str(pof_str) or ord_row["pof_number"].upper() == pof_str.upper():
+                    pof_id = ord_row["id"]
+                    product_size = ord_row["product_size"]
+                    break
 
         cust_str = str(raw_customer).strip() if raw_customer else ""
         if not pof_id and cust_str:
@@ -1567,11 +1617,8 @@ def sync_excel_to_db(
         else:
             shift_type = "Day"
 
-        # Downtime hours (convert minutes to hours if > 24, e.g. from Tubex logs)
-        if total_dt > 24.0:
-            downtime_hours = max(0.0, round(total_dt / 60.0, 2))
-        else:
-            downtime_hours = max(0.0, round(total_dt, 2))
+        # Downtime hours (capped at 12.0 hours for single shift duration)
+        downtime_hours = min(12.0, max(0.0, round(total_dt, 2)))
 
         # Supervisor resolution
         supervisor = "Tariq Mahmood"
@@ -1772,6 +1819,7 @@ def sync_db_to_excel(
         return default_col
 
     col_date = get_target_col(["date"], default_col=1)
+    col_shift = get_target_col(["shift"], default_col=None)
     col_machine = get_target_col(["machine", "line"], default_col=2)
     col_pof = get_target_col(["pof", "order"], default_col=3)
     col_product = get_target_col(["product"], default_col=4)
@@ -1813,8 +1861,13 @@ def sync_db_to_excel(
             clean_s = int(round(parse_clean_number(s_val) or 0))
             clean_dt = float(round(parse_clean_number(dt_val) or 0.0, 2))
             norm_p = normalize_pof(p_val)
-            rem_str = str(rem_val or "").lower()
-            st = "Night" if "night" in rem_str else "Day"
+            if col_shift:
+                sh_val = ws.cell(row=r, column=col_shift).value
+                sh_str = str(sh_val or "").lower().strip()
+                st = "Night" if sh_str in ("night", "b", "2", "shift b", "shift 2") or "night" in sh_str else "Day"
+            else:
+                rem_str = str(rem_val or "").lower()
+                st = "Night" if "night" in rem_str else "Day"
 
             entry = {"row": r, "good": clean_g, "scrap": clean_s, "dt": clean_dt, "norm_pof": norm_p}
             if norm_p:
@@ -1902,6 +1955,8 @@ def sync_db_to_excel(
 
             # Update row cells in Excel
             ws.cell(row=ex_row, column=col_date, value=s_date)
+            if col_shift:
+                ws.cell(row=ex_row, column=col_shift, value=s_st)
             ws.cell(row=ex_row, column=col_machine, value="Continuous Line 1")
             ws.cell(row=ex_row, column=col_pof, value=s_pof)
             ws.cell(row=ex_row, column=col_product, value=display_prod)
@@ -1933,6 +1988,8 @@ def sync_db_to_excel(
             # Append new row at the next available line
             target_row = max(last_data_row + 1, header_row_idx + 1)
             ws.cell(row=target_row, column=col_date, value=s_date)
+            if col_shift:
+                ws.cell(row=target_row, column=col_shift, value=s_st)
             ws.cell(row=target_row, column=col_machine, value="Continuous Line 1")
             ws.cell(row=target_row, column=col_pof, value=s_pof)
             ws.cell(row=target_row, column=col_product, value=display_prod)
