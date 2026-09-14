@@ -340,15 +340,14 @@ class TestAlphaAerosolsFullSuite(unittest.TestCase):
         self.assertIn("error", res_err.json())
 
     def test_10_removal_of_plant_operational_standards(self):
-        """Verify 'Plant Operational Standards' has been removed from front page and dashboard."""
+        """Verify 'Plant Operational Standards' and 'Excel Operations & Synchronization' have been removed from front page and dashboard."""
         for filename in ['aerosol.html', 'index.html', os.path.join('js', 'components', 'dashboard.js')]:
             filepath = os.path.join(os.path.dirname(__file__), filename)
             self.assertTrue(os.path.exists(filepath))
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
             self.assertNotIn("Plant Operational Standards", content, f"'Plant Operational Standards' must be removed from {filename}")
-            if 'dashboard.js' in filename:
-                self.assertIn("Excel Operations & Synchronization", content)
+            self.assertNotIn("Excel Operations & Synchronization", content, f"'Excel Operations & Synchronization' must be removed from {filename}")
 
     def test_11_bidirectional_excel_sync_and_api(self):
         """Verify Option A and Option B bidirectional Excel sync REST endpoints end-to-end."""

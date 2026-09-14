@@ -270,81 +270,41 @@ function renderDashboard(data) {
       </div>
     </div>
 
-    <!-- Operational Analytics: Downtime Root Cause Pareto & Single-Stage Quality Governance -->
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
-      
-      <!-- Left: Downtime Root Cause Pareto Breakdown -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <span>Downtime Root Cause Pareto</span>
-            <small>MTD Stoppage Impact</small>
-          </div>
-          <span class="badge badge-amber">${kpis.downtime_hours_mtd || 0} Total Hrs</span>
+    <!-- Operational Analytics: Downtime Root Cause Pareto Breakdown -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>Downtime Root Cause Pareto</span>
+          <small>MTD Stoppage Impact</small>
         </div>
-        <div class="panel-body">
-          ${downtimePareto.length === 0 ? `
-            <div style="text-align: center; padding: 28px 12px; color: var(--text-dim);">
-              <div style="font-size: 24px; margin-bottom: 6px;">⏱️</div>
-              <div style="font-weight: 600; color: var(--text-main); font-size: 13px; margin-bottom: 2px;">Zero Downtime Recorded</div>
-              <div style="font-size: 11px; color: var(--text-muted);">Continuous line ready for operation. Stoppages and root causes will be categorized here automatically.</div>
-            </div>
-          ` : `
-            <div style="display: flex; flex-direction: column; gap: 14px;">
-              ${downtimePareto.map(item => {
-                const pct = kpis.downtime_hours_mtd > 0 ? Math.round((item.hours / kpis.downtime_hours_mtd) * 100) : 0;
-                return `
-                  <div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 12px;">
-                      <span style="font-weight: 500;">${item.reason}</span>
-                      <span style="font-family: var(--font-mono); color: var(--color-amber);">${item.hours} hrs (${pct}%)</span>
-                    </div>
-                    <div class="progress-bar-container">
-                      <div class="progress-bar-fill amber" style="width: ${pct}%"></div>
-                    </div>
+        <span class="badge badge-amber">${kpis.downtime_hours_mtd || 0} Total Hrs</span>
+      </div>
+      <div class="panel-body">
+        ${downtimePareto.length === 0 ? `
+          <div style="text-align: center; padding: 28px 12px; color: var(--text-dim);">
+            <div style="font-size: 24px; margin-bottom: 6px;">⏱️</div>
+            <div style="font-weight: 600; color: var(--text-main); font-size: 13px; margin-bottom: 2px;">Zero Downtime Recorded</div>
+            <div style="font-size: 11px; color: var(--text-muted);">Continuous line ready for operation. Stoppages and root causes will be categorized here automatically.</div>
+          </div>
+        ` : `
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            ${downtimePareto.map(item => {
+              const pct = kpis.downtime_hours_mtd > 0 ? Math.round((item.hours / kpis.downtime_hours_mtd) * 100) : 0;
+              return `
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 12px;">
+                    <span style="font-weight: 500;">${item.reason}</span>
+                    <span style="font-family: var(--font-mono); color: var(--color-amber);">${item.hours} hrs (${pct}%)</span>
                   </div>
-                `;
-              }).join('')}
-            </div>
-          `}
-        </div>
+                  <div class="progress-bar-container">
+                    <div class="progress-bar-fill amber" style="width: ${pct}%"></div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `}
       </div>
-
-      <!-- Right: Excel Operations & Bidirectional Workbook Synchronization -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <span>Excel Operations & Synchronization</span>
-            <small>Active Monthly Workbook: <strong id="dash-active-wb-name" style="color: var(--color-amber);">${typeof getActiveWorkbookName === 'function' ? getActiveWorkbookName() : 'Aerosol_Sep26.xlsx'}</strong></small>
-          </div>
-          <span class="badge badge-emerald">Option A & B Active</span>
-        </div>
-        <div class="panel-body" style="display: flex; flex-direction: column; justify-content: space-between; gap: 14px; font-size: 12px; line-height: 1.5; color: var(--text-muted);">
-          <div>
-            <div style="margin-bottom: 10px;">
-              <strong style="color: var(--text-main); display: block; margin-bottom: 2px;">Option A — Update Excel Workbook:</strong>
-              Push newly logged shift entries from the web app directly into <code style="color: var(--color-amber);">${typeof getActiveWorkbookName === 'function' ? getActiveWorkbookName() : 'Aerosol_Sep26.xlsx'}</code> on disk with zero COM automation.
-            </div>
-            <div>
-              <strong style="color: var(--text-main); display: block; margin-bottom: 2px;">Option B — Pull from Monthly Excel:</strong>
-              Pull shop-floor shifts from Excel into the database, deduct raw materials via physical mass balance, and refresh live KPIs.
-            </div>
-          </div>
-
-          <div style="display: flex; flex-wrap: wrap; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
-            <button type="button" class="btn btn-primary" onclick="syncToExcel()" style="flex: 1; min-width: 150px; font-size: 12px; padding: 9px 12px;" title="Export shifts from database to local Excel monthly workbook">
-              📤 Update Excel Workbook
-            </button>
-            <button type="button" class="btn btn-secondary" onclick="syncFromExcel()" style="flex: 1; min-width: 150px; font-size: 12px; padding: 9px 12px;" title="Import shifts from local Excel monthly workbook into database">
-              📥 Pull from Excel Sheet
-            </button>
-            <button type="button" class="btn btn-secondary" onclick="downloadActiveWorkbook()" style="font-size: 12px; padding: 9px 12px;" title="Download current monthly Excel workbook">
-              ⬇️ Download .xlsx
-            </button>
-          </div>
-        </div>
-      </div>
-
     </div>
   `;
 }
