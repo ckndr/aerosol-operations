@@ -9,8 +9,11 @@ import os
 import sqlite3
 import math
 import json
+import glob
+import re
+import shutil
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'aerosol.db')
 JSON_PATH = os.path.join(os.path.dirname(__file__), 'data', 'production.json')
@@ -1151,15 +1154,167 @@ def export_job_card_excel(pof_id: int, output_path: str, db_path: Optional[str] 
     wb.save(output_path)
     return output_path
 
-def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path: Optional[str] = None, json_path: Optional[str] = None) -> Dict[str, Any]:
+def parse_clean_number(val: Any) -> Optional[float]:
+    """Parses numeric string or float safely, handling commas, percentages, and Excel error strings."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        if math.isnan(val):
+            return None
+        return float(val)
+    val_str = str(val).strip()
+    if not val_str or val_str.lower() in ("none", "null", "nan", "-", "", "#value!", "#ref!", "#n/a"):
+        return None
+    cleaned = val_str.replace(",", "").replace(" ", "").replace("pcs", "").strip()
+    if cleaned.endswith("%"):
+        try:
+            return float(cleaned[:-1].strip())
+        except ValueError:
+            return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+def parse_clean_date(val: Any) -> Optional[str]:
+    """Parses various date formats and Excel date objects into standard ISO-8601 YYYY-MM-DD string."""
+    if val is None:
+        return None
+    if isinstance(val, (datetime, date)):
+        return val.strftime("%Y-%m-%d")
+    val_str = str(val).strip()
+    if not val_str:
+        return None
+    for fmt in (
+        "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d",
+        "%d-%b-%Y", "%d-%B-%Y", "%d/%b/%Y", "%d/%B/%Y",
+        "%d.%m.%Y", "%d.%m.%y", "%d/%m/%y", "%d-%m-%y",
+        "%b %d, %Y", "%B %d, %Y", "%Y.%m.%d"
+    ):
+        try:
+            return datetime.strptime(val_str, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+def get_monthly_workbook_name(target_date: Optional[Union[str, date, datetime]] = None) -> str:
     """
-    Synchronizes shift production records from an Excel workbook into aerosol.db (SQLite WAL).
+    Returns monthly workbook name formatted as Aerosol_MmmYY.xlsx (e.g., Aerosol_Sep26.xlsx).
+    Matches the Tubex standard monthly convention (Tubex_MmmYY.xlsx).
+    """
+    if target_date is None:
+        dt = datetime.now()
+    elif isinstance(target_date, str):
+        try:
+            dt = datetime.strptime(target_date[:10], "%Y-%m-%d")
+        except Exception:
+            dt = datetime.now()
+    elif isinstance(target_date, datetime):
+        dt = target_date
+    elif isinstance(target_date, date):
+        dt = datetime.combine(target_date, datetime.min.time())
+    else:
+        dt = datetime.now()
+
+    return f"Aerosol_{dt.strftime('%b%y')}.xlsx"
+
+def get_active_aerosol_workbook(
+    base_dir: Optional[str] = None,
+    target_date: Optional[Union[str, date, datetime]] = None,
+    create_if_missing: bool = False
+) -> str:
+    r"""
+    Resolves the active monthly Aerosol workbook following the Tubex convention.
+    Priority hierarchy:
+    1. Exact target month file (e.g. Aerosol_Sep26.xlsx) in base_dir.
+    2. Latest monthly file matching Aerosol_[A-Za-z]{3}\d{2}.xlsx (excluding temp lock ~$ files).
+    3. Fallback master template: Aerosol_Production_Entry.xlsx in base_dir.
+    4. If create_if_missing is True, copies template or creates clean workbook.
+    """
+    if base_dir is None:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Ensure base_dir points to project root where Excel files reside
+    if not os.path.exists(os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")):
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        if os.path.exists(os.path.join(project_root, "Aerosol_Production_Entry.xlsx")):
+            base_dir = project_root
+
+    target_name = get_monthly_workbook_name(target_date)
+    exact_path = os.path.join(base_dir, target_name)
+
+    # 1. Exact monthly file exists
+    if os.path.exists(exact_path):
+        return exact_path
+
+    # 2. Check for any existing monthly workbooks
+    pattern = re.compile(r"^Aerosol_([A-Za-z]{3}\d{2})\.xlsx$", re.IGNORECASE)
+    candidates = []
+    for f in glob.glob(os.path.join(base_dir, "Aerosol_*.xlsx")):
+        fn = os.path.basename(f)
+        if fn.startswith("~$"):
+            continue
+        if pattern.match(fn):
+            candidates.append(f)
+    if candidates:
+        return sorted(candidates)[-1]
+
+    # 3. Fallback to Aerosol_Production_Entry.xlsx
+    fallback_path = os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")
+    if os.path.exists(fallback_path):
+        if create_if_missing:
+            try:
+                shutil.copyfile(fallback_path, exact_path)
+                return exact_path
+            except Exception:
+                return fallback_path
+        return fallback_path
+
+    # 4. If create_if_missing and no template exists, create blank workbook with Data_Entry
+    if create_if_missing:
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data_Entry"
+        ws.cell(row=1, column=1, value="AEROSOL PLANT — DAILY PRODUCTION DATA ENTRY")
+        headers = [
+            'Date', 'Machine', 'POF #', 'Product Name', 'PID', 'Customer',
+            'Total Production\n(pcs)', 'Good Production\n(pcs)', 'Rejects\n(pcs)',
+            'Rejection\n%', 'DownTime', 'Remarks'
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            ws.cell(row=2, column=col_idx, value=h)
+        wb.save(exact_path)
+        return exact_path
+
+    return exact_path
+
+def sync_excel_to_db(
+    excel_path: Optional[str] = None,
+    db_path: Optional[str] = None,
+    json_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Option B: Synchronizes shift production records from an Excel workbook into aerosol.db (SQLite WAL).
     Enforces Zero Windows COM Automation (pure Python openpyxl).
     Deducts raw materials via physical yield-inverse mass balance.
     Auto-refreshes production JSON snapshot (respects custom json_path).
+    Supports dynamic monthly files (Aerosol_MmmYY.xlsx) and fallback (Aerosol_Production_Entry.xlsx).
     """
     if db_path is None:
         db_path = DB_PATH
+
+    base_dir = os.path.dirname(os.path.abspath(db_path)) if db_path else os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")):
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        if os.path.exists(os.path.join(project_root, "Aerosol_Production_Entry.xlsx")):
+            base_dir = project_root
+
+    if excel_path is None:
+        excel_path = get_active_aerosol_workbook(base_dir=base_dir)
+    elif not os.path.isabs(excel_path):
+        excel_path = os.path.join(base_dir, excel_path)
+
     if not os.path.exists(excel_path):
         raise FileNotFoundError(f"Excel workbook not found: {excel_path}")
 
@@ -1169,21 +1324,21 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
 
     # Choose target sheet
     target_sheet_name = None
-    for name in ["Data_Entry", "Daily_Production", "Production", "Shifts"]:
+    for name in ["Data_Entry", "Production_Log", "Daily_Production", "Production", "Shifts"]:
         if name in wb.sheetnames:
             target_sheet_name = name
             break
     ws = wb[target_sheet_name] if target_sheet_name else wb.active
 
-    # Identify header row (scanning first 6 rows)
+    # Identify header row (scanning first 8 rows)
     header_row_idx = None
     headers = {}
-    for r in range(1, min(7, ws.max_row + 1)):
-        row_vals = [ws.cell(row=r, column=c).value for c in range(1, min(20, ws.max_column + 1))]
+    for r in range(1, min(9, ws.max_row + 1)):
+        row_vals = [ws.cell(row=r, column=c).value for c in range(1, min(25, ws.max_column + 1))]
         str_vals = [str(v).lower().strip() for v in row_vals if v is not None]
-        if any("date" in s for s in str_vals) and (any("good" in s or "total" in s or "pof" in s or "machine" in s for s in str_vals)):
+        if any("date" in s for s in str_vals) and (any("good" in s or "total" in s or "pof" in s or "machine" in s or "product" in s or "target" in s for s in str_vals)):
             header_row_idx = r
-            for c in range(1, min(20, ws.max_column + 1)):
+            for c in range(1, min(25, ws.max_column + 1)):
                 val = ws.cell(row=r, column=c).value
                 if val is not None:
                     clean_header = str(val).lower().replace('\n', ' ').strip()
@@ -1193,7 +1348,7 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
     if not header_row_idx:
         return {
             "status": "error",
-            "message": "Could not identify valid header row in Excel worksheet.",
+            "message": f"Could not identify valid header row in Excel worksheet ({excel_path}).",
             "shifts_imported": 0,
             "skipped_duplicates": 0,
             "skipped_empty": 0
@@ -1205,47 +1360,6 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
                 if exclude_keywords and any(ek in h_text for ek in exclude_keywords):
                     continue
                 return ws.cell(row=row_idx, column=col_idx).value
-        return None
-
-    def parse_clean_number(val: Any) -> Optional[float]:
-        if val is None:
-            return None
-        if isinstance(val, (int, float)):
-            if math.isnan(val):
-                return None
-            return float(val)
-        val_str = str(val).strip()
-        if not val_str or val_str.lower() in ("none", "null", "nan", "-", "", "#value!", "#ref!", "#n/a"):
-            return None
-        cleaned = val_str.replace(",", "").replace(" ", "").replace("pcs", "").strip()
-        if cleaned.endswith("%"):
-            try:
-                return float(cleaned[:-1].strip())
-            except ValueError:
-                return None
-        try:
-            return float(cleaned)
-        except ValueError:
-            return None
-
-    def parse_clean_date(val: Any) -> Optional[str]:
-        if val is None:
-            return None
-        if isinstance(val, (datetime, date)):
-            return val.strftime("%Y-%m-%d")
-        val_str = str(val).strip()
-        if not val_str:
-            return None
-        for fmt in (
-            "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d",
-            "%d-%b-%Y", "%d-%B-%Y", "%d/%b/%Y", "%d/%B/%Y",
-            "%d.%m.%Y", "%d.%m.%y", "%d/%m/%y", "%d-%m-%y",
-            "%b %d, %Y", "%B %d, %Y", "%Y.%m.%d"
-        ):
-            try:
-                return datetime.strptime(val_str, fmt).strftime("%Y-%m-%d")
-            except ValueError:
-                pass
         return None
 
     conn = get_connection(db_path)
@@ -1261,16 +1375,16 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
         raw_date = get_col_val(r, ["date"])
         raw_pof = get_col_val(r, ["pof", "order"])
         raw_product = get_col_val(r, ["product"])
-        raw_pid = get_col_val(r, ["pid"])
-        raw_machine = get_col_val(r, ["machine"])
-        raw_customer = get_col_val(r, ["customer"])
+        raw_pid = get_col_val(r, ["pid", "product id"])
+        raw_machine = get_col_val(r, ["machine", "line"])
+        raw_customer = get_col_val(r, ["customer", "client"])
         raw_good = get_col_val(r, ["good"], exclude_keywords=["%", "pct", "rate"])
-        raw_rejects = get_col_val(r, ["reject", "scrap"], exclude_keywords=["%", "pct", "rate"])
-        raw_reject_pct = get_col_val(r, ["rejection %", "reject %", "scrap %"])
-        raw_total = get_col_val(r, ["total"], exclude_keywords=["%", "pct", "rate", "down"])
-        raw_downtime = get_col_val(r, ["down"], exclude_keywords=["reason", "remark", "cause"])
-        raw_remarks = get_col_val(r, ["remark", "reason", "cause"])
-        raw_supervisor = get_col_val(r, ["supervisor", "lead"])
+        raw_rejects = get_col_val(r, ["reject", "scrap", "waste"], exclude_keywords=["%", "pct", "rate"])
+        raw_reject_pct = get_col_val(r, ["rejection %", "reject %", "scrap %", "waste%"])
+        raw_total = get_col_val(r, ["total", "target"], exclude_keywords=["%", "pct", "rate", "down"])
+        raw_downtime = get_col_val(r, ["down", "dt"], exclude_keywords=["reason", "remark", "cause"])
+        raw_remarks = get_col_val(r, ["remark", "reason", "cause", "notes"])
+        raw_supervisor = get_col_val(r, ["supervisor", "lead", "operator"])
         raw_shift = get_col_val(r, ["shift"])
 
         # Check if row is empty or template row
@@ -1321,8 +1435,8 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
 
         # Determine product size from PID, product name, or remarks
         combined_meta = f"{raw_pid or ''} {raw_product or ''} {raw_remarks or ''}"
-        if "9003" in str(raw_pid or "") or "150" in combined_meta:
-            inferred_size = "45x150mm"
+        if "9003" in str(raw_pid or "") or "5003" in str(raw_pid or "") or "150" in combined_meta:
+            inferred_size = "45x150mm" if "150" in combined_meta else "45x160mm"
         else:
             inferred_size = "45x160mm"
 
@@ -1406,7 +1520,7 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
         if raw_supervisor:
             supervisor = str(raw_supervisor).strip()
         elif raw_remarks:
-            for s_name in ["Tariq Mahmood", "M. Aslam", "Sikander"]:
+            for s_name in ["Tariq Mahmood", "M. Aslam", "Sikander", "Production Manager"]:
                 if s_name.lower() in str(raw_remarks).lower():
                     supervisor = s_name
                     break
@@ -1418,7 +1532,7 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
             if rem_clean.lower() == supervisor.lower():
                 downtime_reason = "Normal continuous run" if downtime_hours == 0 else "Unspecified stoppage"
             else:
-                for s_name in ["Tariq Mahmood", "M. Aslam", "Sikander"]:
+                for s_name in ["Tariq Mahmood", "M. Aslam", "Sikander", "Production Manager"]:
                     rem_clean = rem_clean.replace(f"- {s_name}", "").replace(f"-{s_name}", "").strip()
                 downtime_reason = rem_clean or ("Normal continuous run" if downtime_hours == 0 else "Unspecified stoppage")
         elif raw_machine and downtime_hours > 0:
@@ -1463,25 +1577,268 @@ def sync_excel_to_db(excel_path: str = "Aerosol_Production_Entry.xlsx", db_path:
     return {
         "status": "success",
         "file": excel_path,
+        "filename": os.path.basename(excel_path),
         "shifts_imported": shifts_imported,
         "skipped_duplicates": skipped_duplicates,
         "skipped_empty": skipped_empty
     }
 
+def sync_db_to_excel(
+    excel_path: Optional[str] = None,
+    db_path: Optional[str] = None,
+    month_str: Optional[str] = None,
+    filter_date: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Option A: Synchronizes production shifts from aerosol.db (SQLite) into an Excel workbook.
+    Enforces Zero Windows COM Automation (pure openpyxl).
+    Preserves existing formatting, sheet formulas, and structures.
+    Idempotent: Appends only new unrecorded shifts into the first available rows.
+    """
+    if db_path is None:
+        db_path = DB_PATH
+
+    base_dir = os.path.dirname(os.path.abspath(db_path)) if db_path else os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")):
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        if os.path.exists(os.path.join(project_root, "Aerosol_Production_Entry.xlsx")):
+            base_dir = project_root
+
+    if excel_path is None:
+        if month_str:
+            excel_path = os.path.join(base_dir, f"Aerosol_{month_str}.xlsx")
+            if not os.path.exists(excel_path):
+                tmpl = os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")
+                if os.path.exists(tmpl):
+                    shutil.copyfile(tmpl, excel_path)
+                else:
+                    get_active_aerosol_workbook(base_dir=base_dir, create_if_missing=True)
+        else:
+            excel_path = get_active_aerosol_workbook(base_dir=base_dir, create_if_missing=True)
+    elif not os.path.isabs(excel_path):
+        excel_path = os.path.join(base_dir, excel_path)
+
+    if not os.path.exists(excel_path):
+        tmpl = os.path.join(base_dir, "Aerosol_Production_Entry.xlsx")
+        if os.path.exists(tmpl):
+            shutil.copyfile(tmpl, excel_path)
+        else:
+            get_active_aerosol_workbook(base_dir=base_dir, create_if_missing=True)
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(excel_path)
+
+    target_sheet_name = None
+    for name in ["Data_Entry", "Production_Log", "Daily_Production", "Production", "Shifts"]:
+        if name in wb.sheetnames:
+            target_sheet_name = name
+            break
+    ws = wb[target_sheet_name] if target_sheet_name else wb.active
+
+    # Identify header row
+    header_row_idx = None
+    headers = {}
+    for r in range(1, min(9, ws.max_row + 1)):
+        row_vals = [ws.cell(row=r, column=c).value for c in range(1, min(25, ws.max_column + 1))]
+        str_vals = [str(v).lower().strip() for v in row_vals if v is not None]
+        if any("date" in s for s in str_vals) and (any("good" in s or "total" in s or "pof" in s or "machine" in s or "product" in s for s in str_vals)):
+            header_row_idx = r
+            for c in range(1, min(25, ws.max_column + 1)):
+                val = ws.cell(row=r, column=c).value
+                if val is not None:
+                    clean_header = str(val).lower().replace('\n', ' ').strip()
+                    headers[clean_header] = c
+            break
+
+    # If no header row found, establish default standard schema on row 2
+    if not header_row_idx:
+        header_row_idx = 2
+        ws.cell(row=1, column=1, value="AEROSOL PLANT — DAILY PRODUCTION DATA ENTRY")
+        default_headers = [
+            'Date', 'Machine', 'POF #', 'Product Name', 'PID', 'Customer',
+            'Total Production\n(pcs)', 'Good Production\n(pcs)', 'Rejects\n(pcs)',
+            'Rejection\n%', 'DownTime', 'Remarks'
+        ]
+        for c_idx, h_text in enumerate(default_headers, 1):
+            ws.cell(row=header_row_idx, column=c_idx, value=h_text)
+            clean_header = h_text.lower().replace('\n', ' ').strip()
+            headers[clean_header] = c_idx
+
+    def get_target_col(keywords, exclude_keywords=None, default_col=1):
+        for h_text, col_idx in headers.items():
+            if any(k in h_text for k in keywords):
+                if exclude_keywords and any(ek in h_text for ek in exclude_keywords):
+                    continue
+                return col_idx
+        return default_col
+
+    col_date = get_target_col(["date"], default_col=1)
+    col_machine = get_target_col(["machine", "line"], default_col=2)
+    col_pof = get_target_col(["pof", "order"], default_col=3)
+    col_product = get_target_col(["product"], default_col=4)
+    col_pid = get_target_col(["pid", "product id"], default_col=5)
+    col_customer = get_target_col(["customer", "client"], default_col=6)
+    col_total = get_target_col(["total", "target"], exclude_keywords=["%", "pct", "rate", "down"], default_col=7)
+    col_good = get_target_col(["good"], exclude_keywords=["%", "pct", "rate"], default_col=8)
+    col_scrap = get_target_col(["reject", "scrap", "waste"], exclude_keywords=["%", "pct", "rate"], default_col=9)
+    col_scrap_pct = get_target_col(["rejection %", "reject %", "scrap %", "waste%"], default_col=10)
+    col_downtime = get_target_col(["down", "dt"], exclude_keywords=["reason", "remark", "cause"], default_col=11)
+    col_remarks = get_target_col(["remark", "reason", "cause", "notes"], default_col=12)
+
+    # Scan existing rows for already-recorded shifts
+    existing_keys = set()
+    first_empty_row = None
+
+    for r in range(header_row_idx + 1, ws.max_row + 1):
+        d_val = ws.cell(row=r, column=col_date).value
+        g_val = ws.cell(row=r, column=col_good).value
+        p_val = ws.cell(row=r, column=col_pof).value
+        s_val = ws.cell(row=r, column=col_scrap).value
+        rem_val = ws.cell(row=r, column=col_remarks).value
+
+        # Row is empty if Date is blank and Good is blank
+        if (d_val is None or str(d_val).strip() == "") and (g_val is None or str(g_val).strip() == ""):
+            if first_empty_row is None:
+                first_empty_row = r
+            continue
+
+        clean_d = parse_clean_date(d_val)
+        if clean_d:
+            clean_g = int(round(parse_clean_number(g_val) or 0))
+            clean_s = int(round(parse_clean_number(s_val) or 0))
+            pof_str = str(p_val or "").strip()
+            rem_str = str(rem_val or "").lower()
+            st = "Night" if "night" in rem_str else "Day"
+            existing_keys.add((clean_d, st, pof_str, clean_g, clean_s))
+
+    if first_empty_row is None:
+        first_empty_row = max(header_row_idx + 1, ws.max_row + 1)
+
+    # Read shifts from SQLite
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT s.id, s.shift_date, s.shift_type, s.pof_id, s.product_size,
+           s.good_cans, s.line_scrap, s.downtime_hours, s.downtime_reason,
+           s.supervisor, s.created_at,
+           o.pof_number, o.customer_name, o.product_name
+    FROM shifts s
+    LEFT JOIN orders o ON s.pof_id = o.id
+    ORDER BY s.shift_date ASC, s.id ASC;
+    """)
+    shifts = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    # Determine monthly filter if target filename has monthly code (e.g. Aerosol_Sep26.xlsx -> 2026-09)
+    month_filter = None
+    fn = os.path.basename(excel_path)
+    m_code = re.search(r"Aerosol_([A-Za-z]{3}\d{2})\.xlsx", fn, re.IGNORECASE)
+    if m_code:
+        try:
+            mmm_yy = m_code.group(1)
+            dt_m = datetime.strptime(mmm_yy, "%b%y")
+            month_filter = dt_m.strftime("%Y-%m")
+        except Exception:
+            pass
+
+    rows_written = 0
+    current_row = first_empty_row
+
+    for s in shifts:
+        s_date = s["shift_date"]
+        if filter_date and s_date != filter_date:
+            continue
+        if month_filter and not s_date.startswith(month_filter):
+            continue
+
+        s_good = s["good_cans"] or 0
+        s_scrap = s["line_scrap"] or 0
+        s_total = s_good + s_scrap
+        s_pof = s["pof_number"] or f"POF-{s['pof_id']}"
+        s_st = s["shift_type"] or "Day"
+
+        key = (s_date, s_st, str(s_pof).strip(), s_good, s_scrap)
+        if key in existing_keys:
+            continue
+
+        # Write cells
+        ws.cell(row=current_row, column=col_date, value=s_date)
+        ws.cell(row=current_row, column=col_machine, value="Continuous Line 1")
+        ws.cell(row=current_row, column=col_pof, value=s_pof)
+
+        prod_size = s["product_size"] or "45x160mm"
+        pid = 5002 if "160" in prod_size else 5003
+        p_name = s["product_name"] or f"AEROSOL CAN {prod_size} PRINTED"
+        if not str(p_name).startswith(str(pid)):
+            display_prod = f"{pid} - {p_name}"
+        else:
+            display_prod = p_name
+
+        ws.cell(row=current_row, column=col_product, value=display_prod)
+        ws.cell(row=current_row, column=col_pid, value=pid)
+        ws.cell(row=current_row, column=col_customer, value=s["customer_name"] or "Alpha Standard")
+
+        c_tot = ws.cell(row=current_row, column=col_total, value=s_total)
+        c_tot.number_format = '#,##0'
+
+        c_good = ws.cell(row=current_row, column=col_good, value=s_good)
+        c_good.number_format = '#,##0'
+
+        c_scrap = ws.cell(row=current_row, column=col_scrap, value=s_scrap)
+        c_scrap.number_format = '#,##0'
+
+        scrap_rate = round(s_scrap / s_total, 4) if s_total > 0 else 0.0
+        c_rate = ws.cell(row=current_row, column=col_scrap_pct, value=scrap_rate)
+        c_rate.number_format = '0.00%'
+
+        c_dt = ws.cell(row=current_row, column=col_downtime, value=s["downtime_hours"] or 0.0)
+        c_dt.number_format = '0.00'
+
+        rem = f"{s_st} Shift - {s['supervisor'] or 'Line Lead'}"
+        dt_reason = s.get("downtime_reason")
+        if dt_reason and dt_reason.lower() not in ("none", "normal continuous run", ""):
+            rem += f" - {dt_reason}"
+        ws.cell(row=current_row, column=col_remarks, value=rem)
+
+        existing_keys.add(key)
+        rows_written += 1
+        current_row += 1
+
+    wb.save(excel_path)
+    wb.close()
+
+    return {
+        "status": "success",
+        "file": excel_path,
+        "filename": os.path.basename(excel_path),
+        "rows_written": rows_written,
+        "total_shifts_in_db": len(shifts),
+        "message": f"Successfully updated {os.path.basename(excel_path)} with {rows_written} shift record(s)."
+    }
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Alpha Aerosols Production Engine & Data Sync")
-    parser.add_argument("--sync-excel", nargs="?", const="Aerosol_Production_Entry.xlsx", default=None,
+    parser.add_argument("--sync-excel", nargs="?", const="ACTIVE", default=None,
                         help="Sync production data from Excel workbook into SQLite database and update production.json")
+    parser.add_argument("--sync-to-excel", nargs="?", const="ACTIVE", default=None,
+                        help="Sync production shifts from SQLite database into Excel monthly workbook")
     parser.add_argument("--export-json", action="store_true", help="Re-export production.json snapshot from SQLite")
     parser.add_argument("--reseed", action="store_true", help="Reseed database with clean master baseline")
     parser.add_argument("--demo", action="store_true", help="Seed with demo historical shifts for testing")
     args = parser.parse_args()
 
     if args.sync_excel is not None:
-        print(f"Syncing production records from Excel: {args.sync_excel}...")
-        result = sync_excel_to_db(args.sync_excel)
-        print(f"Excel Sync Complete: {result}")
+        target_f = None if args.sync_excel == "ACTIVE" else args.sync_excel
+        print(f"Syncing production records from Excel: {target_f or 'Auto-detected Monthly Workbook'}...")
+        result = sync_excel_to_db(target_f)
+        print(f"Excel -> DB Sync Complete: {result}")
+    elif args.sync_to_excel is not None:
+        target_f = None if args.sync_to_excel == "ACTIVE" else args.sync_to_excel
+        print(f"Syncing shifts from DB to Excel: {target_f or 'Auto-detected Monthly Workbook'}...")
+        result = sync_db_to_excel(target_f)
+        print(f"DB -> Excel Sync Complete: {result}")
     elif args.reseed:
         print("Reseeding master database...")
         seed_master_data(force_reseed=True, demo_data=args.demo)
@@ -1496,3 +1853,4 @@ if __name__ == "__main__":
         data = export_production_json()
         print(f"Data engine ready. Today output: {data['kpis']['today_output_cans']:,} cans.")
         print(f"JSON snapshot saved at: {JSON_PATH}")
+

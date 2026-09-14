@@ -174,6 +174,72 @@ async def export_job_card(request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+async def api_sync_from_excel(request):
+    try:
+        excel_file = None
+        if request.method == "POST":
+            try:
+                body = await request.json()
+                excel_file = body.get("file")
+            except Exception:
+                pass
+        if not excel_file and "file" in request.query_params:
+            excel_file = request.query_params["file"]
+
+        result = engine.sync_excel_to_db(excel_path=excel_file)
+        return JSONResponse({"success": True, **result})
+    except FileNotFoundError as fnf:
+        return JSONResponse({"success": False, "error": str(fnf)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+async def api_sync_to_excel(request):
+    try:
+        excel_file = None
+        month_str = None
+        if request.method == "POST":
+            try:
+                body = await request.json()
+                excel_file = body.get("file")
+                month_str = body.get("month")
+            except Exception:
+                pass
+        if not excel_file and "file" in request.query_params:
+            excel_file = request.query_params["file"]
+        if not month_str and "month" in request.query_params:
+            month_str = request.query_params["month"]
+
+        result = engine.sync_db_to_excel(excel_path=excel_file, month_str=month_str)
+        filename = result.get("filename") or os.path.basename(result.get("file", "Aerosol_Sep26.xlsx"))
+        return JSONResponse({
+            "success": True,
+            "download_url": f"/api/download/workbook/{filename}",
+            **result
+        })
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+async def download_workbook(request):
+    try:
+        filename = request.path_params.get("filename")
+        if not filename or not filename.endswith(".xlsx"):
+            return JSONResponse({"error": "Invalid workbook filename"}, status_code=400)
+        safe_filename = os.path.basename(filename)
+        file_path = os.path.join(BASE_DIR, safe_filename)
+        if not os.path.exists(file_path):
+            data_file_path = os.path.join(BASE_DIR, "data", safe_filename)
+            if os.path.exists(data_file_path):
+                file_path = data_file_path
+            else:
+                return JSONResponse({"error": f"Workbook '{safe_filename}' not found"}, status_code=404)
+        return FileResponse(
+            file_path,
+            filename=safe_filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 routes = [
     Route("/", endpoint=home_redirect),
     Route("/aerosol.html", endpoint=home_redirect),
@@ -196,6 +262,9 @@ routes = [
     Route("/api/dispatches", endpoint=post_dispatch, methods=["POST"]),
     Route("/api/simulate", endpoint=post_simulate_bom, methods=["POST"]),
     Route("/api/export/job-card/{pof_id:int}", endpoint=export_job_card, methods=["GET"]),
+    Route("/api/sync/from-excel", endpoint=api_sync_from_excel, methods=["POST", "GET"]),
+    Route("/api/sync/to-excel", endpoint=api_sync_to_excel, methods=["POST", "GET"]),
+    Route("/api/download/workbook/{filename:str}", endpoint=download_workbook, methods=["GET"]),
     Mount("/css", app=StaticFiles(directory=os.path.join(BASE_DIR, "css")), name="css"),
     Mount("/js", app=StaticFiles(directory=os.path.join(BASE_DIR, "js")), name="js"),
     Mount("/data", app=StaticFiles(directory=os.path.join(BASE_DIR, "data")), name="data"),

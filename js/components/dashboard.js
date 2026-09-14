@@ -162,7 +162,8 @@ function renderDashboard(data) {
           <span>Active Production Orders & Product Fulfillment Matrix</span>
           <small>POF Manufacturing Progress, FG Warehouse Buffer, Tolerance & Fulfillment</small>
         </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button type="button" class="btn btn-secondary" onclick="syncToExcel()" style="padding: 6px 12px; font-size: 12px;" title="Push all logged shifts directly to monthly Excel workbook">📤 Update Excel</button>
           <a href="#orders" class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;">Customer POF Tracker →</a>
           <a href="#entry" class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;">+ Log Floor Shift</a>
         </div>
@@ -309,27 +310,37 @@ function renderDashboard(data) {
         </div>
       </div>
 
-      <!-- Right: Operational Controls & Single-Stage Rules -->
+      <!-- Right: Excel Operations & Bidirectional Workbook Synchronization -->
       <div class="panel">
         <div class="panel-header">
           <div class="panel-title">
-            <span>Plant Operational Standards</span>
-            <small>Kot Abdul Malik Operations Governance</small>
+            <span>Excel Operations & Synchronization</span>
+            <small>Active Monthly Workbook: <strong id="dash-active-wb-name" style="color: var(--color-amber);">${typeof getActiveWorkbookName === 'function' ? getActiveWorkbookName() : 'Aerosol_Sep26.xlsx'}</strong></small>
           </div>
-          <span class="badge badge-emerald">Locked v2.0</span>
+          <span class="badge badge-emerald">Option A & B Active</span>
         </div>
-        <div class="panel-body" style="font-size: 12px; line-height: 1.5; color: var(--text-muted);">
-          <div style="margin-bottom: 12px;">
-            <strong style="color: var(--text-main); display: block; margin-bottom: 2px;">1. Single-Stage Finished Tracking</strong>
-            Container counts are recorded exclusively at the final packing stage. Rejections anywhere along the line are consolidated into Total Line Scrap.
-          </div>
-          <div style="margin-bottom: 12px;">
-            <strong style="color: var(--text-main); display: block; margin-bottom: 2px;">2. Physical Yield-Inverse Mass Balance</strong>
-            Coating consumption strictly enforces <code>Req = Net / (1 - Scrap)</code> (35% lacquer loss = 1.5385×Net; 10% base coat/OPV loss = 1.1111×Net).
-          </div>
+        <div class="panel-body" style="display: flex; flex-direction: column; justify-content: space-between; gap: 14px; font-size: 12px; line-height: 1.5; color: var(--text-muted);">
           <div>
-            <strong style="color: var(--text-main); display: block; margin-bottom: 2px;">3. Chemical Climate Safeguards</strong>
-            Schekosol coatings have a 6-month shelf life and require strict 20°C–25°C air-conditioned storage with automated amber/red warning badges.
+            <div style="margin-bottom: 10px;">
+              <strong style="color: var(--text-main); display: block; margin-bottom: 2px;">Option A — Update Excel Workbook:</strong>
+              Push newly logged shift entries from the web app directly into <code style="color: var(--color-amber);">${typeof getActiveWorkbookName === 'function' ? getActiveWorkbookName() : 'Aerosol_Sep26.xlsx'}</code> on disk with zero COM automation.
+            </div>
+            <div>
+              <strong style="color: var(--text-main); display: block; margin-bottom: 2px;">Option B — Pull from Monthly Excel:</strong>
+              Pull shop-floor shifts from Excel into the database, deduct raw materials via physical mass balance, and refresh live KPIs.
+            </div>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+            <button type="button" class="btn btn-primary" onclick="syncToExcel()" style="flex: 1; min-width: 150px; font-size: 12px; padding: 9px 12px;" title="Export shifts from database to local Excel monthly workbook">
+              📤 Update Excel Workbook
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="syncFromExcel()" style="flex: 1; min-width: 150px; font-size: 12px; padding: 9px 12px;" title="Import shifts from local Excel monthly workbook into database">
+              📥 Pull from Excel Sheet
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="downloadActiveWorkbook()" style="font-size: 12px; padding: 9px 12px;" title="Download current monthly Excel workbook">
+              ⬇️ Download .xlsx
+            </button>
           </div>
         </div>
       </div>

@@ -331,5 +331,38 @@ class TestAlphaAerosolsFullSuite(unittest.TestCase):
         self.assertEqual(res_err.status_code, 404)
         self.assertIn("error", res_err.json())
 
+    def test_10_removal_of_plant_operational_standards(self):
+        """Verify 'Plant Operational Standards' has been removed from front page and dashboard."""
+        for filename in ['aerosol.html', 'index.html', os.path.join('js', 'components', 'dashboard.js')]:
+            filepath = os.path.join(os.path.dirname(__file__), filename)
+            self.assertTrue(os.path.exists(filepath))
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.assertNotIn("Plant Operational Standards", content, f"'Plant Operational Standards' must be removed from {filename}")
+            if 'dashboard.js' in filename:
+                self.assertIn("Excel Operations & Synchronization", content)
+
+    def test_11_bidirectional_excel_sync_and_api(self):
+        """Verify Option A and Option B bidirectional Excel sync REST endpoints end-to-end."""
+        # 1. Option A: POST /api/sync/to-excel
+        res_to = self.client.post("/api/sync/to-excel", json={})
+        self.assertEqual(res_to.status_code, 200)
+        data_to = res_to.json()
+        self.assertTrue(data_to["success"])
+        self.assertIn("Aerosol_", data_to["filename"])
+        self.assertIn("/api/download/workbook/", data_to["download_url"])
+
+        # 2. Option B: POST /api/sync/from-excel
+        res_from = self.client.post("/api/sync/from-excel", json={})
+        self.assertEqual(res_from.status_code, 200)
+        data_from = res_from.json()
+        self.assertTrue(data_from["success"])
+        self.assertIn("shifts_imported", data_from)
+
+        # 3. GET /api/download/workbook/Aerosol_Sep26.xlsx
+        res_dl = self.client.get("/api/download/workbook/Aerosol_Sep26.xlsx")
+        self.assertEqual(res_dl.status_code, 200)
+        self.assertIn("application/vnd.openxmlformats-officedocument", res_dl.headers.get("content-type", ""))
+
 if __name__ == "__main__":
     unittest.main()

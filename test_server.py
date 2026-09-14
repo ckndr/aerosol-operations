@@ -98,5 +98,51 @@ class TestServerEndpoints(unittest.TestCase):
             self.assertIn("image/", res.headers.get("content-type", ""))
             self.assertGreater(len(res.content), 100)
 
+    def test_sync_to_excel_endpoint(self):
+        """Verify Option A REST endpoint /api/sync/to-excel exports shifts to monthly workbook."""
+        # Test POST
+        res_post = self.client.post("/api/sync/to-excel", json={})
+        self.assertEqual(res_post.status_code, 200)
+        data_post = res_post.json()
+        self.assertTrue(data_post["success"])
+        self.assertIn("Aerosol_", data_post["filename"])
+        self.assertIn("/api/download/workbook/", data_post["download_url"])
+
+        # Test GET
+        res_get = self.client.get("/api/sync/to-excel")
+        self.assertEqual(res_get.status_code, 200)
+        self.assertTrue(res_get.json()["success"])
+
+    def test_sync_from_excel_endpoint(self):
+        """Verify Option B REST endpoint /api/sync/from-excel imports shifts from monthly workbook."""
+        # Test POST
+        res_post = self.client.post("/api/sync/from-excel", json={})
+        self.assertEqual(res_post.status_code, 200)
+        data_post = res_post.json()
+        self.assertTrue(data_post["success"])
+        self.assertIn("Aerosol_", data_post["filename"])
+        self.assertIn("shifts_imported", data_post)
+
+        # Test GET
+        res_get = self.client.get("/api/sync/from-excel")
+        self.assertEqual(res_get.status_code, 200)
+        self.assertTrue(res_get.json()["success"])
+
+    def test_download_workbook_endpoint(self):
+        """Verify workbook file download endpoint and validation safeguards."""
+        # Valid monthly workbook download
+        res_valid = self.client.get("/api/download/workbook/Aerosol_Sep26.xlsx")
+        self.assertEqual(res_valid.status_code, 200)
+        self.assertIn("application/vnd.openxmlformats-officedocument", res_valid.headers.get("content-type", ""))
+        self.assertGreater(len(res_valid.content), 1000)
+
+        # Invalid extension (must be .xlsx)
+        res_bad_ext = self.client.get("/api/download/workbook/engine.py")
+        self.assertEqual(res_bad_ext.status_code, 400)
+
+        # Non-existent workbook
+        res_missing = self.client.get("/api/download/workbook/Aerosol_NonExistent99.xlsx")
+        self.assertEqual(res_missing.status_code, 404)
+
 if __name__ == "__main__":
     unittest.main()

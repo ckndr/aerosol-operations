@@ -155,6 +155,21 @@ function renderShiftEntry(data) {
               </button>
             </div>
 
+            <!-- Excel Integration & Sync Action Bar -->
+            <div style="display: flex; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle); align-items: center; justify-content: space-between; flex-wrap: wrap;">
+              <span style="font-size: 12px; color: var(--text-muted);">
+                Monthly Workbook: <strong style="color: var(--color-amber);">${typeof getActiveWorkbookName === 'function' ? getActiveWorkbookName() : 'Aerosol_Sep26.xlsx'}</strong>
+              </span>
+              <div style="display: flex; gap: 8px;">
+                <button type="button" class="btn btn-secondary" onclick="syncToExcel()" style="font-size: 12px; padding: 7px 12px;" title="Push shifts into monthly Excel workbook">
+                  📤 Update Excel Workbook
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="syncFromExcel()" style="font-size: 12px; padding: 7px 12px;" title="Pull shift entries from monthly Excel workbook">
+                  📥 Pull from Excel
+                </button>
+              </div>
+            </div>
+
           </form>
         </div>
       </div>
@@ -166,7 +181,15 @@ function renderShiftEntry(data) {
             <span>Floor Shift History Log</span>
             <small>Single-Stage Verification • Final Saleable Cans Counted at Packing Stage</small>
           </div>
-          <span class="badge badge-steel">${(data.shifts || []).length} Logged Shifts</span>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button type="button" class="btn btn-secondary" onclick="syncToExcel()" style="font-size: 11px; padding: 5px 10px;" title="Push all logged shifts to Excel">
+              📤 Update Excel
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="syncFromExcel()" style="font-size: 11px; padding: 5px 10px;" title="Pull shifts from Excel">
+              📥 Pull from Excel
+            </button>
+            <span class="badge badge-steel">${(data.shifts || []).length} Logged Shifts</span>
+          </div>
         </div>
         <div class="table-responsive">
           <table class="data-table">
@@ -342,7 +365,8 @@ async function handleShiftSubmit(event) {
         });
         const result = await res.json();
         if (res.ok && result.success) {
-          showToast(`Shift logged: ${formatNumber(goodCans)} good cans recorded!`, 'emerald');
+          const wbName = typeof getActiveWorkbookName === 'function' ? getActiveWorkbookName() : 'Aerosol_Sep26.xlsx';
+          showToast(`Shift logged: ${formatNumber(goodCans)} good cans! <a href="javascript:void(0)" onclick="syncToExcel()" style="color:#fff;text-decoration:underline;margin-left:8px;font-weight:600;">[Update ${wbName}]</a>`, 'emerald', 7000);
           form.reset();
           resetShiftCalculations();
           await fetchProductionData();

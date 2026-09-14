@@ -17,6 +17,9 @@ from engine import (
     export_job_card_excel,
     export_production_json,
     sync_excel_to_db,
+    sync_db_to_excel,
+    get_monthly_workbook_name,
+    get_active_aerosol_workbook,
     seed_master_data,
     DB_PATH,
     JSON_PATH
@@ -226,6 +229,138 @@ class TestAlphaAerosolsEngine(unittest.TestCase):
         self.assertEqual(res2["status"], "success")
         self.assertEqual(res2["shifts_imported"], 0)
         self.assertEqual(res2["skipped_duplicates"], 2)
+
+    def test_monthly_workbook_resolution(self):
+        """Verify dynamic monthly Excel naming (Aerosol_MmmYY.xlsx) and fallback resolution."""
+        self.assertEqual(get_monthly_workbook_name("2026-09-14"), "Aerosol_Sep26.xlsx")
+        self.assertEqual(get_monthly_workbook_name("2026-10-01"), "Aerosol_Oct26.xlsx")
+        self.assertEqual(get_monthly_workbook_name("2027-01-15"), "Aerosol_Jan27.xlsx")
+
+        active_wb = get_active_aerosol_workbook(target_date="2026-09-14")
+        self.assertTrue(os.path.exists(active_wb), f"Active workbook {active_wb} must exist")
+        self.assertTrue(os.path.basename(active_wb).startswith("Aerosol_"))
+
+    def test_bidirectional_excel_sync(self):
+        """
+        Verify bidirectional synchronization:
+        Option A: Web/SQLite -> Monthly Excel workbook (sync_db_to_excel)
+        Option B: Monthly Excel -> Web/SQLite (sync_excel_to_db)
+        Ensures idempotence, formatting preservation, and raw material deduction.
+        """
+        import openpyxl
+        import shutil
+
+        test_dir = os.path.join(os.path.dirname(__file__), 'data')
+        test_db = os.path.join(test_dir, 'test_bi_aerosol.db')
+        test_json = os.path.join(test_dir, 'test_bi_production.json')
+        test_xlsx = os.path.join(test_dir, 'Aerosol_Sep26_test.xlsx')
+
+        # Clean slate
+        seed_master_data(test_db, force_reseed=True, demo_data=False)
+        export_production_json(test_db, test_json)
+
+        # Clone template to test_xlsx
+        template_path = os.path.join(os.path.dirname(__file__), 'Aerosol_Production_Entry.xlsx')
+        shutil.copyfile(template_path, test_xlsx)
+
+        try:
+            # 1. Option A: Log a 10,000 can production shift via engine in SQLite
+            shift_id = add_shift_entry(
+                shift_date="2026-09-14",
+                shift_type="Day",
+                pof_id=1,
+                product_size="45x160mm",
+                good_cans=10000,
+                line_scrap=350,
+                downtime_hours=0.5,
+                downtime_reason="Slug feeder jam",
+                supervisor="Tariq Mahmood",
+                db_path=test_db
+            )
+            self.assertIsNotNone(shift_id)
+
+            # 2. Push SQLite shift to Excel workbook (Option A)
+            res_to = sync_db_to_excel(excel_path=test_xlsx, db_path=test_db, month_str="Sep26")
+            self.assertEqual(res_to["status"], "success")
+            self.assertEqual(res_to["rows_written"], 2)
+
+            # Inspect Excel file directly to verify contents and formatting
+            wb = openpyxl.load_workbook(test_xlsx, data_only=True)
+            ws = wb["Data_Entry"]
+            # Row 4 should contain our newly added 10k shift (Row 3 has the inaugural shift)
+            self.assertEqual(str(ws.cell(row=4, column=1).value)[:10], "2026-09-14")
+            self.assertEqual(ws.cell(row=4, column=2).value, "Continuous Line 1")
+            self.assertEqual(ws.cell(row=4, column=3).value, "POF-2026-001")
+            self.assertEqual(ws.cell(row=4, column=5).value, 5002)
+            self.assertEqual(ws.cell(row=4, column=7).value, 10350)
+            self.assertEqual(ws.cell(row=4, column=8).value, 10000)
+            self.assertEqual(ws.cell(row=4, column=9).value, 350)
+            self.assertEqual(ws.cell(row=4, column=11).value, 0.5)
+            self.assertIn("Tariq Mahmood", str(ws.cell(row=4, column=12).value))
+            wb.close()
+
+            # 3. Idempotence test for Option A (pushing again without new shifts writes 0)
+            res_to_again = sync_db_to_excel(excel_path=test_xlsx, db_path=test_db, month_str="Sep26")
+            self.assertEqual(res_to_again["rows_written"], 0)
+
+            # 4. Option B: Sync from Excel back to DB -> should recognize row 4 as duplicate (row 3 is 0/0 inaugural)
+            res_from = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
+            self.assertEqual(res_from["status"], "success")
+            self.assertEqual(res_from["shifts_imported"], 0)
+            self.assertEqual(res_from["skipped_duplicates"], 1)
+
+            # 5. Add a new manual shift in Excel on row 5 (Option B)
+            wb2 = openpyxl.load_workbook(test_xlsx)
+            ws2 = wb2["Data_Entry"]
+            ws2.cell(row=5, column=1, value="2026-09-14")
+            ws2.cell(row=5, column=2, value="Continuous Line 1")
+            ws2.cell(row=5, column=3, value="POF-2026-001")
+            ws2.cell(row=5, column=4, value="5002 - Aerosol Container 45x160mm")
+            ws2.cell(row=5, column=5, value=5002)
+            ws2.cell(row=5, column=6, value="Aerosol Customer")
+            ws2.cell(row=5, column=7, value=12500)
+            ws2.cell(row=5, column=8, value=12000)
+            ws2.cell(row=5, column=9, value=500)
+            ws2.cell(row=5, column=10, value=0.04)
+            ws2.cell(row=5, column=11, value=0.0)
+            ws2.cell(row=5, column=12, value="Night Shift - M. Aslam - Normal continuous run")
+            wb2.save(test_xlsx)
+            wb2.close()
+
+            # 6. Run Option B: Excel -> DB to import row 5
+            res_from_new = sync_excel_to_db(excel_path=test_xlsx, db_path=test_db, json_path=test_json)
+            self.assertEqual(res_from_new["status"], "success")
+            self.assertEqual(res_from_new["shifts_imported"], 1)
+            self.assertEqual(res_from_new["skipped_duplicates"], 1)
+
+            # Verify the newly imported shift exists in SQLite
+            conn = get_connection(test_db)
+            cur = conn.cursor()
+            cur.execute("SELECT good_cans, line_scrap, shift_type, supervisor FROM shifts WHERE good_cans = 12000;")
+            row = cur.fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row["shift_type"], "Night")
+            self.assertEqual(row["supervisor"], "M. Aslam")
+            conn.close()
+
+        finally:
+            for ext in ['', '-wal', '-shm']:
+                p = test_db + ext
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+            if os.path.exists(test_json):
+                try:
+                    os.remove(test_json)
+                except Exception:
+                    pass
+            if os.path.exists(test_xlsx):
+                try:
+                    os.remove(test_xlsx)
+                except Exception:
+                    pass
 
 if __name__ == "__main__":
     unittest.main()

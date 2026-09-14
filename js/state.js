@@ -347,6 +347,133 @@ window.addEventListener('DOMContentLoaded', () => {
   if (label) label.textContent = AppState.currentTheme === 'dark' ? 'Graphite Dark' : 'Daylight White';
 });
 
+// Dynamic Monthly Workbook & Bidirectional Excel Sync
+function getActiveWorkbookName(targetDate = null) {
+  const d = targetDate ? new Date(targetDate) : new Date();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const mmm = months[d.getMonth()];
+  const yy = String(d.getFullYear()).slice(-2);
+  return `Aerosol_${mmm}${yy}.xlsx`;
+}
+
+function exportShiftsClientCsv(shifts, filename) {
+  const headers = [
+    'Date', 'Machine', 'POF #', 'Product Name', 'PID', 'Customer',
+    'Total Production (pcs)', 'Good Production (pcs)', 'Rejects (pcs)',
+    'Rejection %', 'DownTime', 'Remarks'
+  ];
+  const rows = (shifts || []).map(s => {
+    const total = (s.good_cans || 0) + (s.line_scrap || 0);
+    const scrapPct = total > 0 ? ((s.line_scrap / total) * 100).toFixed(2) + '%' : '0.00%';
+    const pid = String(s.product_size || '').includes('150') ? 5003 : 5002;
+    const rem = `${s.shift_type || 'Day'} Shift - ${s.supervisor || 'Line Lead'}${s.downtime_reason ? ' - ' + s.downtime_reason : ''}`;
+    return [
+      s.shift_date || '',
+      'Continuous Line 1',
+      s.pof_number || `POF-${s.pof_id}`,
+      `"${(s.product_name || 'Aerosol Container').replace(/"/g, '""')}"`,
+      pid,
+      `"${(s.customer_name || 'Alpha Standard').replace(/"/g, '""')}"`,
+      total,
+      s.good_cans || 0,
+      s.line_scrap || 0,
+      scrapPct,
+      s.downtime_hours || 0,
+      `"${rem.replace(/"/g, '""')}"`
+    ].join(',');
+  });
+
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.replace(/\.xlsx$/i, '.csv');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function syncToExcel() {
+  const wbName = getActiveWorkbookName();
+  showToast(`Updating Excel workbook (${wbName})...`, 'amber', 2500);
+
+  try {
+    const res = await fetch('/api/sync/to-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const fn = data.filename || wbName;
+      const count = data.rows_written !== undefined ? data.rows_written : 0;
+      showToast(`Excel Updated: ${count} shift(s) saved to ${fn}! <a href="/api/download/workbook/${fn}" style="color: #fff; text-decoration: underline; margin-left: 6px; font-weight: 600;" download>Download .xlsx</a>`, 'emerald', 6000);
+      return data;
+    } else {
+      throw new Error(`Server returned ${res.status}`);
+    }
+  } catch (err) {
+    console.warn('Backend sync/to-excel unavailable, generating browser CSV export fallback:', err);
+    exportShiftsClientCsv(AppState.data?.shifts || [], wbName);
+    showToast(`Browser export: Shifts saved to ${wbName.replace('.xlsx', '.csv')}!`, 'emerald', 5000);
+  }
+}
+
+async function syncFromExcel() {
+  const wbName = getActiveWorkbookName();
+  showToast(`Pulling data from Excel (${wbName})...`, 'amber', 2500);
+
+  try {
+    const res = await fetch('/api/sync/from-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const fn = data.filename || wbName;
+      const imported = data.shifts_imported || 0;
+      showToast(`Imported ${imported} shift(s) from ${fn} into database!`, 'emerald', 5000);
+      await fetchProductionData();
+      return data;
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      showToast(`Excel import failed: ${errData.error || res.statusText}`, 'red');
+    }
+  } catch (err) {
+    console.warn('Backend sync/from-excel unavailable:', err);
+    showToast(`Pulling from Excel requires the local Python server (python server.py).`, 'amber');
+  }
+}
+
+async function downloadActiveWorkbook() {
+  const wbName = getActiveWorkbookName();
+  try {
+    const res = await fetch(`/api/download/workbook/${wbName}`);
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = wbName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Downloaded ${wbName}`, 'emerald');
+      return;
+    }
+  } catch (e) {
+    console.warn('API download not reachable, falling back to CSV export:', e);
+  }
+  exportShiftsClientCsv(AppState.data?.shifts || [], wbName);
+  showToast(`Exported shifts to ${wbName.replace('.xlsx', '.csv')}`, 'emerald');
+}
+
 // Explicit global exports for inline event handlers and component modules
 if (typeof window !== 'undefined') {
   window.AppState = AppState;
@@ -356,4 +483,8 @@ if (typeof window !== 'undefined') {
   window.syncPendingShifts = syncPendingShifts;
   window.toggleTheme = toggleTheme;
   window.fetchProductionData = fetchProductionData;
+  window.getActiveWorkbookName = getActiveWorkbookName;
+  window.syncToExcel = syncToExcel;
+  window.syncFromExcel = syncFromExcel;
+  window.downloadActiveWorkbook = downloadActiveWorkbook;
 }

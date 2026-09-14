@@ -32,6 +32,9 @@
           <span id="connection-status-text">Online</span>
         </div>
         <span id="offline-queue-badge" class="badge badge-amber" style="display: none; cursor: pointer;" onclick="syncPendingShifts()" title="Click to manually push queued shifts">0 queued</span>
+        <button type="button" class="btn btn-secondary" onclick="syncToExcel()" style="padding: 4px 10px; font-size: 11px; height: 32px;" title="Push shifts to monthly Excel workbook">
+          📤 Excel Sync
+        </button>
         <button class="theme-toggle-btn" onclick="toggleTheme()" id="theme-toggle-btn">
           🌓 <span id="theme-toggle-label">Graphite Dark</span>
         </button>
