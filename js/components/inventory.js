@@ -49,10 +49,13 @@ function renderInventory(data) {
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">
             <button class="btn btn-secondary active" onclick="filterInventory('all', this)">All Items (${inventory.length})</button>
-            <button class="btn btn-secondary" onclick="filterInventory('Aluminum Slugs', this)">Slugs</button>
+            <button class="btn btn-secondary" onclick="filterInventory('slugs', this)">Slugs</button>
             <button class="btn btn-secondary" onclick="filterInventory('coatings', this)">Coatings (Schekosol)</button>
-            <button class="btn btn-secondary" onclick="filterInventory('Printing Ink', this)">Inks</button>
-            <button class="btn btn-secondary" onclick="filterInventory('alerts', this)">⚠️ Shelf-Life Alerts (${criticalItems.length + warningItems.length})</button>
+            <button class="btn btn-secondary" onclick="filterInventory('inks', this)">Inks</button>
+            <button class="btn btn-secondary" onclick="filterInventory('chemicals', this)">Chemicals & Thinners</button>
+            <button class="btn btn-secondary" onclick="filterInventory('packaging', this)">Packaging</button>
+            <button class="btn btn-secondary" onclick="filterInventory('shortages', this)">⚠️ Shortages / Low Stock</button>
+            <button class="btn btn-secondary" onclick="filterInventory('alerts', this)">❄️ Shelf-Life Alerts (${criticalItems.length + warningItems.length})</button>
           </div>
           <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">
             Warehouse: Kot Abdul Malik Central Stores
@@ -82,10 +85,15 @@ function renderInventory(data) {
               const shelfBadgeClass = shelf.status === 'critical' ? 'badge-red' : (shelf.status === 'warning' ? 'badge-amber' : 'badge-emerald');
               const coverDays = item.days_of_stock;
               const coverColor = coverDays < 7 ? 'var(--color-danger)' : (coverDays < 15 ? 'var(--color-amber)' : 'var(--color-emerald)');
-              const isCoating = item.category.includes('Lacquer') || item.category.includes('Base Coat') || item.category.includes('Varnish');
+              const isCoating = /lacquer|base coat|varnish/i.test(item.category);
+              const isSlug = /slug/i.test(item.category);
+              const isInk = /ink/i.test(item.category);
+              const isChemical = /lubricant|cleaner|thinner/i.test(item.category);
+              const isPackaging = /packaging/i.test(item.category);
+              const isShortage = (item.balance_qty || 0) < (item.min_stock_level || 0);
 
               return `
-                <tr data-category="${item.category}" data-shelf="${shelf.status || 'normal'}" data-iscoating="${isCoating}">
+                <tr data-category="${item.category}" data-shelf="${shelf.status || 'normal'}" data-iscoating="${isCoating}" data-isslug="${isSlug}" data-isink="${isInk}" data-ischemical="${isChemical}" data-ispackaging="${isPackaging}" data-isshortage="${isShortage}">
                   <td><strong style="font-family: var(--font-mono); color: var(--color-amber);">${item.item_code}</strong></td>
                   <td>
                     <div style="font-weight: 600;">${item.item_name}</div>
@@ -93,7 +101,9 @@ function renderInventory(data) {
                   </td>
                   <td><span class="badge badge-steel">${item.category}</span></td>
                   <td class="num" style="font-weight: bold; font-size: 14px;">
-                    ${formatNumber(item.balance_qty, 1)} <small style="font-weight: normal; color: var(--text-muted); font-size: 11px;">${item.uom}</small>
+                    <span style="color: ${isShortage ? 'var(--color-danger)' : 'var(--text-main)'};">${formatNumber(item.balance_qty, 1)}</span>
+                    <small style="font-weight: normal; color: var(--text-muted); font-size: 11px;">${item.uom}</small>
+                    ${isShortage ? '<br><span class="badge badge-red" style="font-size: 9px; padding: 1px 4px;">Low Stock</span>' : ''}
                   </td>
                   <td class="num" style="color: var(--text-muted);">${formatNumber(item.daily_burn_rate, 1)} ${item.uom}/d</td>
                   <td class="num">
@@ -140,8 +150,18 @@ function filterInventory(filter, btnElement) {
   rows.forEach(r => {
     if (filter === 'all') {
       r.style.display = '';
+    } else if (filter === 'slugs') {
+      r.style.display = r.getAttribute('data-isslug') === 'true' ? '' : 'none';
     } else if (filter === 'coatings') {
       r.style.display = r.getAttribute('data-iscoating') === 'true' ? '' : 'none';
+    } else if (filter === 'inks') {
+      r.style.display = r.getAttribute('data-isink') === 'true' ? '' : 'none';
+    } else if (filter === 'chemicals') {
+      r.style.display = r.getAttribute('data-ischemical') === 'true' ? '' : 'none';
+    } else if (filter === 'packaging') {
+      r.style.display = r.getAttribute('data-ispackaging') === 'true' ? '' : 'none';
+    } else if (filter === 'shortages') {
+      r.style.display = r.getAttribute('data-isshortage') === 'true' ? '' : 'none';
     } else if (filter === 'alerts') {
       const shelfStatus = r.getAttribute('data-shelf');
       r.style.display = (shelfStatus === 'warning' || shelfStatus === 'critical') ? '' : 'none';

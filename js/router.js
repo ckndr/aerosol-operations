@@ -5,6 +5,7 @@
 
 const routes = {
   '#dashboard': { sectionId: 'view-dashboard', render: (data) => renderDashboard(data) },
+  '#jobcards': { sectionId: 'view-jobcards', render: (data) => renderJobCards(data) },
   '#orders': { sectionId: 'view-orders', render: (data) => renderOrders(data) },
   '#entry': { sectionId: 'view-entry', render: (data) => renderShiftEntry(data) },
   '#inventory': { sectionId: 'view-inventory', render: (data) => renderInventory(data) },

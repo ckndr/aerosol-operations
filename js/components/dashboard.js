@@ -10,6 +10,7 @@ function renderDashboard(data) {
 
   const kpis = data.kpis || {};
   const downtimePareto = data.downtime_pareto || [];
+  const currentMonthStr = data.meta && data.meta.as_of_date ? new Date(data.meta.as_of_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Nov 2026';
 
   // Determine Scrap Status Indicator
   let scrapClass = 'emerald';
@@ -97,7 +98,7 @@ function renderDashboard(data) {
       <div class="kpi-card emerald">
         <div class="kpi-label">
           <span>Month-to-Date (MTD) Output</span>
-          <span class="badge badge-emerald">Sep 2026</span>
+          <span class="badge badge-emerald">${currentMonthStr}</span>
         </div>
         <div class="kpi-value">${formatNumber(kpis.mtd_output_cans || 0)} <small style="font-size: 13px; font-weight: normal; color: var(--text-dim)">cans</small></div>
         <div class="kpi-sub">
@@ -137,7 +138,7 @@ function renderDashboard(data) {
         </div>
         <div class="kpi-value">${kpis.active_pofs_count || displayOrders.length}</div>
         <div class="kpi-sub">
-          <span>45x160mm & 45x150mm Lines Active</span>
+          <span>45x140mm (131mm Finished) Lines Active</span>
         </div>
       </div>
 
@@ -153,6 +154,22 @@ function renderDashboard(data) {
         </div>
       </div>
 
+    </div>
+
+    <!-- Active Campaign & Material Feasibility Strip -->
+    <div style="background: rgba(245, 158, 11, 0.05); border: 1px solid rgba(245, 158, 11, 0.25); border-left: 4px solid var(--color-amber); padding: 12px 18px; border-radius: var(--radius-sm); margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span class="status-dot amber"></span>
+        <div>
+          <span style="font-weight: 700; color: var(--color-amber);">Active MRP Campaign:</span>
+          <span style="color: var(--text-main); font-weight: 600;"> AER-POF-03 — Markhor Blanc 120ml (100,000 cans)</span>
+          <span style="color: var(--text-muted); font-size: 12px;"> • Job Card: <strong>AER-PL-SOR-03</strong> • 140mm Post-Press Standard</span>
+        </div>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <a href="./Alpha Aerosols - Planning & MRP.xlsx" download class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;">📗 Master MRP (.xlsx)</a>
+        <a href="#jobcards" class="btn btn-primary" style="padding: 4px 10px; font-size: 11px;">View MRP Breakdown & Job Cards →</a>
+      </div>
     </div>
 
     <!-- Active Production Orders & Product Fulfillment Matrix -->
@@ -211,7 +228,7 @@ function renderDashboard(data) {
                 <tr>
                   <td>
                     <strong style="font-family: var(--font-mono); color: var(--color-amber);">${ord.pof_number}</strong>
-                    <div style="font-size: 10px; color: var(--text-dim);">${ord.artwork_ref || 'Art Proof Rev1'}</div>
+                    <div style="font-size: 10px; color: var(--text-dim);">${ord.job_card_no ? `<span style='color: var(--color-amber);'>${ord.job_card_no}</span> • ` : ''}${ord.artwork_ref || 'Art Proof Rev1'}</div>
                   </td>
                   <td>
                     <div style="font-weight: 600;">${ord.customer_name}</div>

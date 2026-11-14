@@ -1,4 +1,4 @@
-﻿# SYSTEM CONTEXT & OPERATING RULES: ALPHA AEROSOLS (KOT ABDUL MALIK)
+# SYSTEM CONTEXT & OPERATING RULES: ALPHA AEROSOLS (KOT ABDUL MALIK)
 
 ## 1. USER PROFILE & ORGANIZATIONAL REALITY
 - **User**: Sikander
@@ -50,7 +50,7 @@ The Aerosol Production Web Application (`aerosol.html` / PWA) is built on modern
 5. **Bidirectional Web Portal (Floor Entry)**:
    - Touch-friendly web forms for on-site shift logging and POF creation directly in the browser with offline `IndexedDB` resilience.
 6. **Physical Yield-Inverse Mass Balance**:
-   - All coating consumption calculations enforce true yield-inverse physics: $\text{Req} = \frac{\text{Net}}{1 - \text{Scrap}}$ (35% lacquer loss = $1/(1-0.35) = 1.5385 \times \text{Net}$; 10% base coat/OPV loss = $1/(1-0.10) = 1.1111 \times \text{Net}$).
+   - All coating consumption calculations enforce true yield-inverse physics: $\text{Req} = \frac{\text{Net}}{1 - \text{Scrap}}$ (10% lacquer loss = $1/(1-0.10) = 1.1111 \times \text{Net}$; 15% base coat/OPV loss = $1/(1-0.15) = 1.1765 \times \text{Net}$).
 7. **Chemical Shelf-Life & Climate Safeguards**:
    - Schekosol base coats and varnishes have a 6-month shelf life and require 20°C–25°C air-conditioned storage.
    - Built-in countdown badges (amber at 120 days, red at 150 days) and temperature storage warnings.
@@ -61,7 +61,50 @@ The Aerosol Production Web Application (`aerosol.html` / PWA) is built on modern
 
 ## 5. TECHNICAL SPECIFICATIONS (LOCKED)
 - Container Standard: Primary 45 × 160 mm (0.40 mm wall); Alternate 45 × 150 mm (0.35 mm wall).
-- Lacquer Scrap Rate: 35% (airless spray lance transfer loss model).
-- Base Coat / OPV Scrap Rate: 10%.
-- Ink Rate: Held at 0.280 kg / 1000 cans conservative commissioning buffer.
-- Washer Chemical: Held at 5.0 kg / 1000 cans initial charge/buffer.
+- Current products: 45 × 140 mm trimmed / 130–131 mm finished. Coating areas are calculated at the 140 mm trimmed height: outside 0.019792 m², inside 0.020975 m².
+- Source of truth for BOM figures: Alpha Aerosols - Planning & MRP.xlsx (engine.py web app is outdated).
+- Slug: 38 pcs/kg (26.316 kg/1000 cans) for all can lengths, 15% line waste.
+- Lacquer Scrap Rate: 10%.
+- Base Coat / OPV Scrap Rate: 15%.
+- Ink: 0.245 kg net / station / 1000 cans + 12.5% waste = 0.280 kg gross (plant allowance, no TDS rate).
+- Washer: 5.0 kg / 1000 cans (plant allowance, no TDS consumption rate; TDS bath 0.7–1.4% @ 70±5°C).
+- Thinners: 20% waste; lacquer thinner 1.5% + purge; coating thinner 3% of product base coat + varnish (exceeds TDS 1–2%, plant allowance).
+
+
+## 5.1 MASTER WORKBOOK & ARCHIVE DIRECTORY LOCATION (SHARED ONEDRIVE)
+- **Shared Folder Path**: `C:\Users\HP\OneDrive\Aerosol Shared Files\QMS Documentation\AER-SORs\Planing SORs`
+- **Master Workbook**: `Alpha Aerosols - Planning & MRP.xlsx`
+- **Job Cards Record Keeping Folder**: `Record Keeping of Old Job Cards\` (mirrored to `Issued Job Cards\`).
+  - Contains monthly folders (e.g. `2026-11\`) with frozen PDFs & standalone XLSXs.
+  - Contains monthly multi-tab archive workbooks: `Job_Cards_Archive_YYYY_MM.xlsx`.
+- **Portable Relative Hyperlink Architecture**:
+  - Formulas in `Issued_Job_Cards` sheet Columns N & O MUST use portable relative links:
+    `=HYPERLINK("Record Keeping of Old Job Cards\YYYY-MM\<pdf>", "Open PDF")`
+    `=HYPERLINK("[Record Keeping of Old Job Cards\Job_Cards_Archive_YYYY_MM.xlsx]'<tab>'!A1", "Open Archive")`
+  - Zero hardcoded drive letters (`D:\...`) in master hyperlinks to guarantee seamless portability across OneDrive shared users.
+- **Mandatory Finalization Sync Rule**:
+  - Whenever local files or job cards are updated and finalized, they MUST be pushed to the shared OneDrive folder.
+  - Automated via `issue_job_card.py` (instant push upon issuance), `push.bat` (pushes before git commit), or manual sync via `Sync_Shared_Folder.bat` (`python sync_shared_mrp.py --push`).
+
+## 6. MODEL ORCHESTRATION RULE: COST-OPTIMAL ARGON INTELLIGENCE & TOKEN EFFICIENCY
+- **Core Objective**: Maximize **Gemini 4 Argon's** strategic intelligence while minimizing total token consumption across the session. Always choose the execution path with the **lowest total token cost** without sacrificing output quality.
+- **Token Break-Even Economics (Direct Execution vs. Subagent Handoff)**:
+  - Spawning a subagent incurs a fixed initialization overhead (system prompt + tool schemas + handoff prompt + summary return).
+  - **Execute Directly in Argon (Zero Handoff Overhead)** when the task is **small, surgical, and bounded**:
+    - Reading 1–2 small/known files or targeted line ranges (`StartLine`/`EndLine`).
+    - Making 1–3 targeted `edit_file` or `write_file` calls where the exact changes are already known.
+    - Running a single, quick, low-output shell command.
+    - Answering direct questions, math/BOM calculations, architectural reasoning, or planning.
+  - **Delegate to `flash` / `flash_lite` Subagents** when the task would **pollute Argon's context window or require multi-step iteration**:
+    - **Broad Exploration & Search**: Multi-file codebase searches, grepping across directories, or reading large/unknown files (>300 lines) where raw file contents would bloat Argon's history on every subsequent turn.
+    - **Bulk File Generation / Refactoring**: Writing large boilerplate files, updating many files repetitively, or generating extensive data/JSON/SQLite scripts.
+    - **Iterative / Noisy Command Execution**: Running test suites, build loops, data scraping, or debugging scripts with verbose stdout/stderr.
+    - **Parallel Independent Workstreams**: Tasks that can be fanned out simultaneously to multiple `flash` workers.
+- **Model Tier Selection for Subagents**:
+  - **`Model: "flash_lite"`**: Use for simple mechanical lookups, file listing, straightforward text extraction, or single-purpose file writes.
+  - **`Model: "flash"`**: Use for multi-step codebase research, code synthesis, script execution, and structured edits.
+  - **Never use `Model: "inherit"`** for routine delegation (as it duplicates Argon's heavy token cost), unless explicitly requested by the user.
+- **Context Hygiene Tactics (Token Savers)**:
+  - Always use `StartLine` and `EndLine` when reading files directly to avoid loading entire files into Argon's context.
+  - Instruct subagents to return **concise, distilled summaries** (exact file paths, line numbers, key findings) rather than dumping raw file contents back into the main conversation.
+  - **Subagent Guardrail**: When running as a delegated `flash` or `flash_lite` subagent, execute tools directly and return a compact summary—never spawn recursive subagents.

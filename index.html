@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/app.css">
+  <link rel="stylesheet" href="./css/app.css?v=20261114">
 </head>
 <body>
 
@@ -46,6 +46,9 @@
       <a href="#dashboard" class="nav-tab active">
         <span>📊 KPI Dashboard</span>
       </a>
+      <a href="#jobcards" class="nav-tab">
+        <span>📄 Job Cards & MRP</span>
+      </a>
       <a href="#orders" class="nav-tab">
         <span>📋 Customer POFs</span>
       </a>
@@ -67,6 +70,7 @@
   <!-- Main View Container -->
   <main class="app-container">
     <section id="view-dashboard" class="view-section active"></section>
+    <section id="view-jobcards" class="view-section"></section>
     <section id="view-orders" class="view-section"></section>
     <section id="view-entry" class="view-section"></section>
     <section id="view-inventory" class="view-section"></section>
@@ -98,8 +102,10 @@
           <div class="form-group">
             <label class="form-label">Container Size</label>
             <select name="product_size" class="form-select">
-              <option value="45x160mm">45 x 160 mm (Primary Standard, 0.40mm)</option>
-              <option value="45x150mm">45 x 150 mm (Alternate Standard, 0.35mm)</option>
+              <option value="45x131mm">45 x 131 mm (140mm post-press - Standard)</option>
+              <option value="45x130mm">45 x 130 mm (140mm post-press - ME Saxe)</option>
+              <option value="45x160mm">45 x 160 mm (Tall Can, 0.40mm)</option>
+              <option value="45x150mm">45 x 150 mm (Medium Can, 0.35mm)</option>
             </select>
           </div>
           <div class="form-group">
@@ -164,7 +170,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">Carton Count</label>
-            <input type="number" name="carton_count" class="form-input" placeholder="e.g. 175" min="1" required>
+            <input type="number" name="carton_count" class="form-input" placeholder="e.g. 78 (450 pcs/box)" min="1" required>
           </div>
           <div class="form-group">
             <label class="form-label">Pallet Count</label>
@@ -195,14 +201,15 @@
   <div id="toast-container" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="./js/state.js"></script>
-  <script src="./js/components/dashboard.js"></script>
-  <script src="./js/components/orders.js"></script>
-  <script src="./js/components/shift_entry.js"></script>
-  <script src="./js/components/inventory.js"></script>
-  <script src="./js/components/dispatches.js"></script>
-  <script src="./js/components/simulator.js"></script>
-  <script src="./js/router.js"></script>
+  <script src="./js/state.js?v=20261114"></script>
+  <script src="./js/components/dashboard.js?v=20261114"></script>
+  <script src="./js/components/job_cards.js?v=20261114"></script>
+  <script src="./js/components/orders.js?v=20261114"></script>
+  <script src="./js/components/shift_entry.js?v=20261114"></script>
+  <script src="./js/components/inventory.js?v=20261114"></script>
+  <script src="./js/components/dispatches.js?v=20261114"></script>
+  <script src="./js/components/simulator.js?v=20261114"></script>
+  <script src="./js/router.js?v=20261114"></script>
 
   <!-- PWA Service Worker Registration -->
   <script>

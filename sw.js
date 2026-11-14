@@ -6,7 +6,8 @@
  * - No aggressive self.skipWaiting() forcing unprompted reloads
  */
 
-const CACHE_NAME = 'alpha-aerosols-v2.0.0';
+// Baseline version identifier: alpha-aerosols-v2.0.0
+const CACHE_NAME = 'alpha-aerosols-v2.1.0-20261114';
 const STATIC_ASSETS = [
   './',
   './aerosol.html',
@@ -20,6 +21,7 @@ const STATIC_ASSETS = [
   './js/state.js',
   './js/router.js',
   './js/components/dashboard.js',
+  './js/components/job_cards.js',
   './js/components/orders.js',
   './js/components/shift_entry.js',
   './js/components/inventory.js',
@@ -70,7 +72,7 @@ self.addEventListener('fetch', (event) => {
 
   // Static Assets: Cache-First
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
+    caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
       if (cachedResponse) {
         return cachedResponse;
       }

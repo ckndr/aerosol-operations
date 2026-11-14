@@ -243,7 +243,25 @@ async def download_workbook(request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+async def serve_issued_job_card(request):
+    try:
+        raw_path = request.path_params.get("filepath", "")
+        full_path = os.path.normpath(os.path.join(BASE_DIR, "Issued Job Cards", raw_path))
+        if not os.path.exists(full_path):
+            full_path = os.path.normpath(os.path.join(BASE_DIR, "Record Keeping of Old Job Cards", raw_path))
+        if os.path.commonpath([BASE_DIR, full_path]) == BASE_DIR and os.path.exists(full_path) and os.path.isfile(full_path):
+            ext = os.path.splitext(full_path)[1].lower()
+            m_type = "application/pdf" if ext == ".pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            return FileResponse(full_path, media_type=m_type, filename=os.path.basename(full_path))
+        return JSONResponse({"error": f"Job card file '{raw_path}' not found"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 routes = [
+    Route("/Issued Job Cards/{filepath:path}", endpoint=serve_issued_job_card, methods=["GET"]),
+    Route("/issued-job-cards/{filepath:path}", endpoint=serve_issued_job_card, methods=["GET"]),
+    Route("/Record Keeping of Old Job Cards/{filepath:path}", endpoint=serve_issued_job_card, methods=["GET"]),
+    Route("/record-keeping-of-old-job-cards/{filepath:path}", endpoint=serve_issued_job_card, methods=["GET"]),
     Route("/", endpoint=home_redirect),
     Route("/aerosol.html", endpoint=home_redirect),
     Route("/index.html", endpoint=home_redirect),

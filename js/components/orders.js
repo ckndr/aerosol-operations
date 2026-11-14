@@ -25,12 +25,13 @@ function renderOrders(data) {
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-secondary active" onclick="filterOrders('all', this)">All Orders (${orders.length})</button>
-            <button class="btn btn-secondary" onclick="filterOrders('In Production', this)">In Production</button>
-            <button class="btn btn-secondary" onclick="filterOrders('Pending', this)">Pending</button>
+            <button class="btn btn-secondary" onclick="filterOrders('In Progress', this)">In Progress</button>
+            <button class="btn btn-secondary" onclick="filterOrders('Issued to Floor', this)">Issued to Floor</button>
             <button class="btn btn-secondary" onclick="filterOrders('Completed', this)">Completed</button>
+            <button class="btn btn-secondary" onclick="filterOrders('On Hold', this)">On Hold</button>
           </div>
           <div style="font-family: var(--font-mono); font-size: 12px; color: var(--text-dim);">
-            Active Standard: Monobloc Aluminum (45x160mm & 45x150mm)
+            Active Standard: 45x140mm Post-Press (131mm/130mm Finished) & 45x160mm
           </div>
         </div>
       </div>
@@ -54,12 +55,15 @@ function renderOrders(data) {
           </thead>
           <tbody>
             ${orders.length === 0 ? '<tr><td colspan="11" style="text-align: center; padding: 24px;">No active orders found.</td></tr>' : orders.map(ord => {
-              const statusBadge = ord.status === 'Completed' ? 'badge-emerald' : (ord.status === 'In Production' ? 'badge-amber' : 'badge-steel');
+              const statusBadge = ord.status === 'Completed' ? 'badge-emerald' : 
+                                 (ord.status === 'In Progress' || ord.status === 'In Production' ? 'badge-amber' : 
+                                 (ord.status === 'Issued to Floor' ? 'badge-blue' : 'badge-steel'));
               const barClass = ord.completion_pct >= 100 ? 'emerald' : 'amber';
               return `
                 <tr data-status="${ord.status}">
                   <td>
                     <strong style="font-family: var(--font-mono); color: var(--color-amber);">${ord.pof_number}</strong>
+                    ${ord.job_card_no ? `<div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-emerald); font-weight: 600;">${ord.job_card_no}</div>` : ''}
                     <div style="font-size: 10px; color: var(--text-dim);">${ord.artwork_ref || 'Proof Rev0'}</div>
                   </td>
                   <td>
@@ -95,9 +99,21 @@ function renderOrders(data) {
                   </td>
                   <td><span class="badge ${statusBadge}">${ord.status}</span></td>
                   <td style="text-align: center; white-space: nowrap;">
-                    <a href="/api/export/job-card/${ord.id}" target="_blank" class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" title="Export Job Card Excel (openpyxl)">
-                      📄 Job Card (.xlsx)
-                    </a>
+                    <div style="display: inline-flex; gap: 4px; flex-wrap: wrap; justify-content: center;">
+                      <a href="/api/export/job-card/${ord.id}" target="_blank" class="btn btn-secondary" style="padding: 4px 6px; font-size: 11px;" title="Dynamic Export Job Card Excel">
+                        📊 Generate
+                      </a>
+                      ${(ord.pdf_path || ord.job_card_pdf) ? `
+                        <a href="${ord.pdf_path || ord.job_card_pdf}" target="_blank" class="btn btn-primary" style="padding: 4px 6px; font-size: 11px;" title="View Frozen PDF Job Card">
+                          📄 PDF
+                        </a>
+                      ` : ''}
+                      ${(ord.xlsx_path || ord.job_card_xlsx) ? `
+                        <a href="${ord.xlsx_path || ord.job_card_xlsx}" target="_blank" class="btn btn-secondary" style="padding: 4px 6px; font-size: 11px;" title="Download Frozen XLSX Job Card">
+                          📑 XLSX
+                        </a>
+                      ` : ''}
+                    </div>
                   </td>
                 </tr>
               `;

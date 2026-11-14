@@ -10,7 +10,8 @@ function renderShiftEntry(data) {
   const container = document.getElementById('view-entry');
   if (!container) return;
 
-  const orders = (data.orders || []).filter(o => o.status === 'In Production' || o.status === 'Pending');
+  const activeOrders = (data.orders || []).filter(o => o.status !== 'Completed');
+  const orders = activeOrders.length > 0 ? activeOrders : (data.orders || []);
   const todayIso = new Date().toISOString().split('T')[0];
 
   container.innerHTML = `
@@ -64,7 +65,7 @@ function renderShiftEntry(data) {
                   <option value="">-- Select Active POF --</option>
                   ${orders.map(o => `
                     <option value="${o.id}" data-size="${o.product_size}" data-customer="${o.customer_name}" data-rem="${o.remaining_qty}">
-                      ${o.pof_number} — ${o.customer_name} (${o.product_size})
+                      ${o.pof_number} — ${o.customer_name} (${o.product_name || o.product_size})
                     </option>
                   `).join('')}
                 </select>
